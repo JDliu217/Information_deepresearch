@@ -122,6 +122,22 @@ class FactExtractorAgentTests(unittest.TestCase):
             {"模拟来源指标"},
         )
         self.assertTrue(all(point["id"].startswith("dp_") for point in state.data_points))
+        self.assertEqual(
+            {node["name"] for node in state.knowledge_graph["nodes"]},
+            {
+                "中国新能源汽车行业的发展趋势是什么？",
+                "政策环境",
+                "市场需求",
+            },
+        )
+        self.assertEqual(len(state.knowledge_graph["nodes"]), 3)
+        self.assertEqual(len(state.knowledge_graph["edges"]), 2)
+        self.assertTrue(
+            all(
+                edge["source"] == "中国新能源汽车行业的发展趋势是什么？"
+                for edge in state.knowledge_graph["edges"]
+            )
+        )
 
     def test_fact_extractor_builds_and_deduplicates_knowledge_graph(self):
         async def run():
