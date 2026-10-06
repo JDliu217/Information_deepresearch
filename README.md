@@ -15,7 +15,7 @@
 ## 当前迭代
 
 - iteration-01：建立研究状态、规划、搜索、写作和审核的最小链路。
-- iteration-02（进行中）：对齐 V2 领域字段；来源、事实、章节草稿和进度事件可以按章节追踪。
+- iteration-02：对齐 V2 领域字段；来源、事实和章节草稿可以按章节追踪，并固定进度事件协议。
 - 后续迭代：加入结构化数据分析、图表、检查点、本地知识库和简化前端。
 
 ## 学习方式
@@ -46,6 +46,8 @@
 `research_evidence_ready`、`draft_ready`、`review_completed` 和 `research_completed`。
 `draft_ready` 事件还包含 `outline` 和 `draft_sections`，可以按章节读取中间结果。
 最终的 `research_completed` 事件包含报告、审核结果、质量评分和引用。
+所有事件都有 `type`、`session_id`、`phase` 和 `iteration`；每种事件的必需业务字段
+见 `backend/app/domain/events.py` 中的 `EVENT_REQUIRED_FIELDS`。
 
 测试事件流：
 

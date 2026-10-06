@@ -83,10 +83,10 @@ V2 的核心研究行为。
 | --- | --- |
 | `iteration-01` | Mock 环境下跑通规划、搜索、事实、写作、审核和内部事件流 |
 | `iteration-02` | 对齐状态模型和事件协议，建立本契约对应的领域对象 |
-| `iteration-03` | 增加章节大纲、假设驱动研究、数据点和知识图谱基础 |
+| `iteration-03` | 增加假设驱动研究、数据点和知识图谱基础 |
 | `iteration-04` | 实现 DataAnalyst，输出洞察和 ECharts 配置 |
 | `iteration-05` | 实现 CodeWizard，完成受限代码执行和图表记录 |
-| `iteration-06` | 对齐章节写作、引用和结构化审核反馈 |
+| `iteration-06` | 完善章节写作、引用和结构化审核反馈 |
 | `iteration-07` | 增加 FastAPI SSE 单一研究接口 |
 | `iteration-08` | 增加检查点、恢复和取消 |
 | `iteration-09` | 接入真实 LLM、Bocha 搜索和可选本地知识库 |

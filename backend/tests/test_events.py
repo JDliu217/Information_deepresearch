@@ -83,6 +83,15 @@ class ResearchEventTests(unittest.TestCase):
                 data=[],
             )
 
+    def test_event_data_cannot_replace_common_fields(self):
+        with self.assertRaisesRegex(ValueError, "session_id"):
+            ResearchEvent(
+                ResearchEventType.PHASE_STARTED,
+                "session-001",
+                "planning",
+                data={"agent": "planner", "session_id": "other-session"},
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

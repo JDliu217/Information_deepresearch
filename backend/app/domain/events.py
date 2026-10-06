@@ -69,6 +69,8 @@ EVENT_REQUIRED_FIELDS = {
     ),
 }
 
+EVENT_ENVELOPE_FIELDS = frozenset({"type", "session_id", "phase", "iteration"})
+
 
 @dataclass(frozen=True)
 class ResearchEvent:
@@ -98,6 +100,10 @@ class ResearchEvent:
             raise ValueError("研究事件 iteration 不能小于 0")
         if not isinstance(self.data, dict):
             raise ValueError("研究事件 data 必须是字典")
+        reserved_fields = EVENT_ENVELOPE_FIELDS & self.data.keys()
+        if reserved_fields:
+            reserved = ", ".join(sorted(reserved_fields))
+            raise ValueError(f"研究事件 data 不能覆盖公共字段: {reserved}")
         missing_fields = EVENT_REQUIRED_FIELDS[self.type] - self.data.keys()
         if missing_fields:
             missing = ", ".join(sorted(missing_fields))
