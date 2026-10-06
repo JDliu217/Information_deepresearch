@@ -27,16 +27,26 @@ class FactExtractorAgent(BaseAgent):
             payload={
                 "query": state.query,
                 "sources": state.raw_sources,
-                "instruction": "只提取来源正文中明确表达、且可以由同一 URL 支撑的事实。",
+                "hypotheses": state.hypotheses,
+                "instruction": "只提取来源正文中明确表达、且可以由同一 URL 支撑的事实；如果事实与某个研究假设相关，请标记关联假设和支持方向。",
             },
         )
-        facts = self._validate_facts(result.get("facts"), state.raw_sources)
+        facts = self._validate_facts(
+            result.get("facts"),
+            state.raw_sources,
+            state.hypotheses,
+        )
         state.facts = self._deduplicate_facts(state.facts + facts)
+        self._apply_hypothesis_evidence(state.hypotheses, facts)
         state.phase = "researching"
         return state
 
     @staticmethod
-    def _validate_facts(value: Any, sources: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    def _validate_facts(
+        value: Any,
+        sources: list[dict[str, Any]],
+        hypotheses: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
         if not isinstance(value, list):
             raise ValueError("FactExtractor 返回的 facts 必须是列表")
 
@@ -49,6 +59,11 @@ class FactExtractorAgent(BaseAgent):
             str(source.get("url", "")).strip(): source
             for source in sources
             if source.get("url")
+        }
+        hypothesis_ids = {
+            str(hypothesis.get("id", "")).strip()
+            for hypothesis in hypotheses
+            if hypothesis.get("id")
         }
         validated: list[dict[str, Any]] = []
         for index, item in enumerate(value, start=1):
@@ -76,12 +91,64 @@ class FactExtractorAgent(BaseAgent):
                 "source_type": str(item.get("source_type", "web")).strip() or "web",
                 "confidence": confidence,
             }
+            related_hypothesis = str(item.get("related_hypothesis") or "").strip()
+            hypothesis_support = str(item.get("hypothesis_support") or "").strip()
+            if related_hypothesis or hypothesis_support:
+                if not related_hypothesis or not hypothesis_support:
+                    raise ValueError(
+                        f"FactExtractor 的第 {index} 个事实假设关联字段必须同时提供"
+                    )
+                if related_hypothesis not in hypothesis_ids:
+                    raise ValueError(
+                        f"FactExtractor 的第 {index} 个事实引用了未知假设"
+                    )
+                if hypothesis_support not in {"supports", "refutes", "neutral"}:
+                    raise ValueError(
+                        f"FactExtractor 的第 {index} 个事实 hypothesis_support 无效"
+                    )
+                fact["related_hypothesis"] = related_hypothesis
+                fact["hypothesis_support"] = hypothesis_support
+
             source_context = source_by_url[source_url]
             for field_name in ("section_id", "section_title"):
                 if source_context.get(field_name):
                     fact[field_name] = source_context[field_name]
             validated.append(fact)
         return validated
+
+    @staticmethod
+    def _apply_hypothesis_evidence(
+        hypotheses: list[dict[str, Any]],
+        facts: list[dict[str, Any]],
+    ) -> None:
+        """将事实中的支持方向累积到对应假设。"""
+        hypotheses_by_id = {
+            str(hypothesis.get("id", "")).strip(): hypothesis
+            for hypothesis in hypotheses
+            if hypothesis.get("id")
+        }
+        for fact in facts:
+            hypothesis_id = fact.get("related_hypothesis")
+            if not hypothesis_id or hypothesis_id not in hypotheses_by_id:
+                continue
+
+            hypothesis = hypotheses_by_id[hypothesis_id]
+            support = fact["hypothesis_support"]
+            summary = str(fact.get("content", "")).strip()[:100]
+            if support == "supports":
+                evidence = hypothesis.setdefault("evidence_for", [])
+                if summary not in evidence:
+                    evidence.append(summary)
+                if len(evidence) >= 2:
+                    hypothesis["status"] = "supported"
+            elif support == "refutes":
+                evidence = hypothesis.setdefault("evidence_against", [])
+                if summary not in evidence:
+                    evidence.append(summary)
+                if len(evidence) >= 2:
+                    hypothesis["status"] = "refuted"
+            elif hypothesis.get("status") == "unverified":
+                hypothesis["status"] = "partially_supported"
 
     @staticmethod
     def _deduplicate_facts(facts: list[dict[str, Any]]) -> list[dict[str, Any]]:

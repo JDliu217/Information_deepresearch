@@ -84,20 +84,24 @@ class MockLLMClient(LLMClient):
 
         if role == "fact_extractor":
             facts = []
+            hypotheses = payload.get("hypotheses", [])
+            hypothesis = hypotheses[0] if hypotheses else None
             for source in payload.get("sources", []):
                 content = str(source.get("content") or source.get("snippet") or "").strip()
                 url = str(source.get("url", "")).strip()
                 if not content or not url:
                     continue
-                facts.append(
-                    {
-                        "content": content,
-                        "source_title": str(source.get("title", "")).strip(),
-                        "source_url": url,
-                        "source_type": "web",
-                        "confidence": 0.7,
-                    }
-                )
+                fact = {
+                    "content": content,
+                    "source_title": str(source.get("title", "")).strip(),
+                    "source_url": url,
+                    "source_type": "web",
+                    "confidence": 0.7,
+                }
+                if hypothesis and hypothesis.get("id"):
+                    fact["related_hypothesis"] = str(hypothesis["id"])
+                    fact["hypothesis_support"] = "supports"
+                facts.append(fact)
             return {"facts": facts}
 
         if role == "critic":

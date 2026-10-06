@@ -25,6 +25,30 @@ class BrokenFactClient(LLMClient):
         return ""
 
 
+class HypothesisFactClient(LLMClient):
+    def __init__(self, support, hypothesis_id="h-1"):
+        self.support = support
+        self.hypothesis_id = hypothesis_id
+
+    async def complete_json(self, role, payload):
+        facts = []
+        for source in payload["sources"]:
+            facts.append(
+                {
+                    "content": f"关于假设的证据：{source['title']}",
+                    "source_title": source["title"],
+                    "source_url": source["url"],
+                    "confidence": 0.9,
+                    "related_hypothesis": self.hypothesis_id,
+                    "hypothesis_support": self.support,
+                }
+            )
+        return {"facts": facts}
+
+    async def complete_text(self, role, payload):
+        return ""
+
+
 class FactExtractorAgentTests(unittest.TestCase):
     def test_fact_extractor_turns_raw_sources_into_facts(self):
         async def run_chain():
@@ -46,6 +70,14 @@ class FactExtractorAgentTests(unittest.TestCase):
             {"sec_1", "sec_2", "sec_3"},
         )
         self.assertTrue(all(fact["section_title"] for fact in state.facts))
+        self.assertTrue(
+            all(fact["related_hypothesis"] == "h_1" for fact in state.facts)
+        )
+        self.assertTrue(
+            all(fact["hypothesis_support"] == "supports" for fact in state.facts)
+        )
+        self.assertEqual(state.hypotheses[0]["status"], "supported")
+        self.assertEqual(len(state.hypotheses[0]["evidence_for"]), 3)
 
     def test_fact_extractor_rejects_unknown_source_url(self):
         state = ResearchState("测试问题")
@@ -63,6 +95,53 @@ class FactExtractorAgentTests(unittest.TestCase):
     def test_fact_extractor_requires_sources(self):
         with self.assertRaisesRegex(ValueError, "来源"):
             asyncio.run(FactExtractorAgent(MockLLMClient()).run(ResearchState("测试问题")))
+
+    def test_fact_extractor_marks_hypothesis_as_refuted(self):
+        async def run():
+            state = ResearchState("测试问题")
+            state.raw_sources = [
+                {"title": "来源一", "url": "https://example.com/1", "snippet": "证据一"},
+                {"title": "来源二", "url": "https://example.com/2", "snippet": "证据二"},
+            ]
+            state.hypotheses = [
+                {
+                    "id": "h-1",
+                    "content": "待验证假设",
+                    "status": "unverified",
+                    "evidence_for": [],
+                    "evidence_against": [],
+                }
+            ]
+            return await FactExtractorAgent(
+                HypothesisFactClient("refutes")
+            ).run(state)
+
+        state = asyncio.run(run())
+
+        self.assertEqual(state.hypotheses[0]["status"], "refuted")
+        self.assertEqual(len(state.hypotheses[0]["evidence_against"]), 2)
+
+    def test_fact_extractor_rejects_unknown_hypothesis(self):
+        state = ResearchState("测试问题")
+        state.raw_sources = [
+            {"title": "来源", "url": "https://example.com/1", "snippet": "证据"}
+        ]
+        state.hypotheses = [
+            {
+                "id": "h-1",
+                "content": "待验证假设",
+                "status": "unverified",
+                "evidence_for": [],
+                "evidence_against": [],
+            }
+        ]
+
+        with self.assertRaisesRegex(ValueError, "未知假设"):
+            asyncio.run(
+                FactExtractorAgent(
+                    HypothesisFactClient("supports", hypothesis_id="missing")
+                ).run(state)
+            )
 
 
 if __name__ == "__main__":
