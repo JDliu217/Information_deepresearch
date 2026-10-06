@@ -30,6 +30,7 @@ class ResearchState:
     # 规划结果
     plan: list[dict[str, Any]] = field(default_factory=list)
     research_questions: list[str] = field(default_factory=list)
+    pending_search_queries: list[str] = field(default_factory=list)
 
     # 研究证据
     sources: list[dict[str, Any]] = field(default_factory=list)

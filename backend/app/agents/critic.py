@@ -29,6 +29,7 @@ class CriticAgent(BaseAgent):
                 "report": state.final_report,
                 "facts": state.facts,
                 "sources": state.sources,
+                "iteration": state.iteration,
                 "instruction": "检查事实是否有来源支撑，并判断报告是否需要补充研究。",
             },
         )
@@ -58,10 +59,21 @@ class CriticAgent(BaseAgent):
         if not isinstance(issues, list) or not all(isinstance(issue, str) for issue in issues):
             raise ValueError("Critic issues 必须是字符串列表")
 
+        needs_more_research = value.get("needs_more_research", False)
+        if not isinstance(needs_more_research, bool):
+            raise ValueError("Critic needs_more_research 必须是布尔值")
+
+        search_queries = value.get("search_queries", [])
+        if not isinstance(search_queries, list) or not all(
+            isinstance(query, str) and query.strip() for query in search_queries
+        ):
+            raise ValueError("Critic search_queries 必须是非空字符串列表")
+
         return {
             "verdict": verdict,
             "quality_score": quality_score,
             "summary": str(value.get("summary", "")).strip(),
-            "needs_more_research": bool(value.get("needs_more_research", False)),
+            "needs_more_research": needs_more_research,
             "issues": issues,
+            "search_queries": [query.strip() for query in search_queries],
         }

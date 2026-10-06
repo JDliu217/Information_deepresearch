@@ -103,6 +103,7 @@ class MockLLMClient(LLMClient):
                 "summary": "报告中的事实都关联了来源。" if passed else "报告缺少足够的可验证证据。",
                 "needs_more_research": not passed,
                 "issues": [] if passed else ["需要补充带来源的事实"],
+                "search_queries": [] if passed else ["补充权威来源和数据"],
             }
 
         raise ValueError(f"MockLLMClient 暂时不支持角色: {role}")
@@ -136,6 +137,12 @@ class MockLLMClient(LLMClient):
                 lines.append(f"{index}. {content} ([{title}]({url}))")
         else:
             lines.append("当前没有收集到可引用的事实，无法形成可靠结论。")
+
+        review = payload.get("review", {})
+        issues = review.get("issues", []) if isinstance(review, dict) else []
+        if issues:
+            lines.extend(["", "## 根据审核意见修订", ""])
+            lines.extend(f"- 已处理：{issue}" for issue in issues)
 
         lines.extend(
             [

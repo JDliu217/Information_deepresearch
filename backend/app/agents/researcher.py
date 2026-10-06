@@ -25,7 +25,10 @@ class ResearcherAgent(BaseAgent):
 
     async def run(self, state: ResearchState) -> ResearchState:
         """搜索所有子问题，并把来源写入共享状态。"""
-        questions = [question.strip() for question in state.research_questions]
+        if state.pending_search_queries:
+            questions = [query.strip() for query in state.pending_search_queries]
+        else:
+            questions = [question.strip() for question in state.research_questions]
         questions = [question for question in questions if question]
         if not questions:
             raise ValueError("没有可执行的研究子问题")
@@ -47,6 +50,7 @@ class ResearcherAgent(BaseAgent):
             for source in state.sources
             if source.get("url")
         ]
+        state.pending_search_queries = []
         state.phase = "researching"
         return state
 

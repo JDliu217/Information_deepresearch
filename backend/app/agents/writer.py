@@ -29,7 +29,9 @@ class WriterAgent(BaseAgent):
                 "plan": state.plan,
                 "facts": state.facts,
                 "references": state.references,
-                "instruction": "生成带 Markdown 标题和可点击来源链接的研究报告。",
+                "review": state.review,
+                "iteration": state.iteration,
+                "instruction": "生成带 Markdown 标题和可点击来源链接的研究报告；若有审核意见，逐条处理。",
             },
         )
         report = report.strip()

@@ -6,6 +6,41 @@ from app.core.search_client import MockSearchClient
 from app.workflow.research_workflow import ResearchWorkflow
 
 
+def review(verdict, *, more_research=False, issues=None, search_queries=None, score=5.0):
+    return {
+        "verdict": verdict,
+        "quality_score": score,
+        "summary": "测试审核结果",
+        "needs_more_research": more_research,
+        "issues": issues or [],
+        "search_queries": search_queries or [],
+    }
+
+
+class SequencedReviewLLM(MockLLMClient):
+    def __init__(self, reviews):
+        self.reviews = iter(reviews)
+        self.writer_payloads = []
+
+    async def complete_json(self, role, payload):
+        if role == "critic":
+            return next(self.reviews)
+        return await super().complete_json(role, payload)
+
+    async def complete_text(self, role, payload):
+        self.writer_payloads.append(payload)
+        return await super().complete_text(role, payload)
+
+
+class RecordingSearchClient(MockSearchClient):
+    def __init__(self):
+        self.queries = []
+
+    async def search(self, query, limit=3):
+        self.queries.append(query)
+        return await super().search(query, limit)
+
+
 class ResearchWorkflowTests(unittest.TestCase):
     def test_workflow_runs_full_research_chain(self):
         workflow = ResearchWorkflow(MockLLMClient(), MockSearchClient())
@@ -30,6 +65,78 @@ class ResearchWorkflowTests(unittest.TestCase):
         )
 
         self.assertEqual(state.session_id, "session-001")
+
+    def test_critic_routes_to_supplementary_research_then_passes(self):
+        llm = SequencedReviewLLM(
+            [
+                review(
+                    "needs_revision",
+                    more_research=True,
+                    issues=["补充最新行业数据"],
+                    search_queries=["2025年新能源汽车行业数据"],
+                ),
+                review("pass", score=8.0),
+            ]
+        )
+        search = RecordingSearchClient()
+        workflow = ResearchWorkflow(llm, search, max_iterations=1)
+
+        state = asyncio.run(workflow.run("新能源汽车行业趋势"))
+
+        self.assertEqual(state.phase, "completed")
+        self.assertEqual(state.review["verdict"], "pass")
+        self.assertEqual(state.iteration, 1)
+        self.assertEqual(len(search.queries), 4)  # 3 个初始问题 + 1 个补充查询
+        self.assertEqual(search.queries[-1], "2025年新能源汽车行业数据")
+        self.assertEqual(len(state.sources), 4)
+        self.assertEqual(len(state.facts), 4)
+        self.assertIn("2025年新能源汽车行业数据", state.final_report)
+
+    def test_critic_routes_to_writer_revision_without_new_search(self):
+        llm = SequencedReviewLLM(
+            [
+                review(
+                    "needs_revision",
+                    issues=["补充结论与证据之间的说明"],
+                ),
+                review("pass", score=8.0),
+            ]
+        )
+        search = RecordingSearchClient()
+        workflow = ResearchWorkflow(llm, search, max_iterations=1)
+
+        state = asyncio.run(workflow.run("新能源汽车行业趋势"))
+
+        self.assertEqual(state.review["verdict"], "pass")
+        self.assertEqual(state.iteration, 1)
+        self.assertEqual(len(search.queries), 3)
+        self.assertEqual(len(llm.writer_payloads), 2)
+        self.assertIn(
+            "补充结论与证据之间的说明",
+            llm.writer_payloads[1]["review"]["issues"],
+        )
+        self.assertIn("补充结论与证据之间的说明", state.final_report)
+
+    def test_workflow_stops_after_max_iterations(self):
+        llm = SequencedReviewLLM(
+            [
+                review("needs_revision", issues=["第一轮问题"]),
+                review("needs_revision", issues=["仍需改进"], score=5.0),
+            ]
+        )
+        workflow = ResearchWorkflow(llm, MockSearchClient(), max_iterations=1)
+
+        state = asyncio.run(workflow.run("测试行业", session_id="bounded"))
+
+        self.assertEqual(state.phase, "completed")
+        self.assertEqual(state.iteration, 1)
+        self.assertEqual(state.review["verdict"], "needs_revision")
+        self.assertEqual(state.review["issues"], ["仍需改进"])
+        self.assertEqual(len(llm.writer_payloads), 2)
+
+    def test_workflow_rejects_negative_iteration_limit(self):
+        with self.assertRaisesRegex(ValueError, "max_iterations"):
+            ResearchWorkflow(MockLLMClient(), MockSearchClient(), max_iterations=-1)
 
 
 if __name__ == "__main__":
