@@ -41,6 +41,11 @@ class FactExtractorAgentTests(unittest.TestCase):
         self.assertEqual(len(state.facts), 3)
         self.assertTrue(all(fact["source_url"] for fact in state.facts))
         self.assertTrue(all(0 <= fact["confidence"] <= 1 for fact in state.facts))
+        self.assertEqual(
+            {fact["section_id"] for fact in state.facts},
+            {"sec_1", "sec_2", "sec_3"},
+        )
+        self.assertTrue(all(fact["section_title"] for fact in state.facts))
 
     def test_fact_extractor_rejects_unknown_source_url(self):
         state = ResearchState("测试问题")

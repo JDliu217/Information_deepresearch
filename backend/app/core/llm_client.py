@@ -54,14 +54,17 @@ class MockLLMClient(LLMClient):
                     {
                         "title": "现状与定义",
                         "description": f"明确“{query}”的研究范围和当前现状。",
+                        "search_queries": [f"{query} 的当前现状和关键定义"],
                     },
                     {
                         "title": "问题与证据",
                         "description": "整理公开来源中的事实、数据和主要争议。",
+                        "search_queries": [f"{query} 的主要问题和公开证据"],
                     },
                     {
                         "title": "趋势与建议",
                         "description": "根据已有证据判断未来趋势并提出建议。",
+                        "search_queries": [f"{query} 的未来趋势和改进建议"],
                     },
                 ],
                 "research_questions": [

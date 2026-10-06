@@ -45,6 +45,11 @@ class FactExtractorAgent(BaseAgent):
             for source in sources
             if source.get("url")
         }
+        source_by_url = {
+            str(source.get("url", "")).strip(): source
+            for source in sources
+            if source.get("url")
+        }
         validated: list[dict[str, Any]] = []
         for index, item in enumerate(value, start=1):
             if not isinstance(item, dict):
@@ -64,15 +69,18 @@ class FactExtractorAgent(BaseAgent):
             if not 0 <= confidence <= 1:
                 raise ValueError(f"FactExtractor 的第 {index} 个事实 confidence 必须在 0 到 1 之间")
 
-            validated.append(
-                {
-                    "content": content,
-                    "source_title": str(item.get("source_title", "")).strip(),
-                    "source_url": source_url,
-                    "source_type": str(item.get("source_type", "web")).strip() or "web",
-                    "confidence": confidence,
-                }
-            )
+            fact = {
+                "content": content,
+                "source_title": str(item.get("source_title", "")).strip(),
+                "source_url": source_url,
+                "source_type": str(item.get("source_type", "web")).strip() or "web",
+                "confidence": confidence,
+            }
+            source_context = source_by_url[source_url]
+            for field_name in ("section_id", "section_title"):
+                if source_context.get(field_name):
+                    fact[field_name] = source_context[field_name]
+            validated.append(fact)
         return validated
 
     @staticmethod

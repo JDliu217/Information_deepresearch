@@ -23,6 +23,33 @@ class ResearcherAgentTests(unittest.TestCase):
         self.assertEqual(len(state.raw_sources), 3)
         self.assertEqual(len(state.references), 3)
         self.assertTrue(all(source["url"].startswith("https://") for source in state.raw_sources))
+        self.assertEqual(
+            {source["section_id"] for source in state.raw_sources},
+            {"sec_1", "sec_2", "sec_3"},
+        )
+
+    def test_researcher_uses_all_queries_from_a_section(self):
+        async def run():
+            state = ResearchState("测试问题")
+            state.outline = [
+                {
+                    "id": "sec-market",
+                    "title": "市场规模",
+                    "search_queries": ["市场规模 2024", "市场规模 2025"],
+                }
+            ]
+            return await ResearcherAgent(MockSearchClient()).run(state)
+
+        state = asyncio.run(run())
+
+        self.assertEqual(len(state.raw_sources), 2)
+        self.assertEqual(
+            {source["query"] for source in state.raw_sources},
+            {"市场规模 2024", "市场规模 2025"},
+        )
+        self.assertTrue(
+            all(source["section_id"] == "sec-market" for source in state.raw_sources)
+        )
 
     def test_researcher_deduplicates_existing_source_urls(self):
         async def run():
