@@ -2,6 +2,7 @@ import unittest
 
 from app.domain.events import (
     EVENT_TYPES,
+    EVENT_REQUIRED_FIELDS,
     RESEARCH_PHASES,
     ResearchEvent,
     ResearchEventType,
@@ -18,8 +19,13 @@ class ResearchEventTests(unittest.TestCase):
             type=ResearchEventType.OUTLINE_READY,
             session_id="session-001",
             phase="planning",
-            iteration=0,
-            data={"outline": [{"id": "sec-1"}]},
+            data={
+                "outline": [{"id": "sec-1"}],
+                "research_questions": [],
+                "hypotheses": [],
+                "key_entities": [],
+                "mind_map": {},
+            },
         )
 
         self.assertEqual(
@@ -30,8 +36,27 @@ class ResearchEventTests(unittest.TestCase):
                 "phase": "planning",
                 "iteration": 0,
                 "outline": [{"id": "sec-1"}],
+                "research_questions": [],
+                "hypotheses": [],
+                "key_entities": [],
+                "mind_map": {},
             },
         )
+
+    def test_each_event_type_declares_required_fields(self):
+        self.assertEqual(set(EVENT_TYPES), set(EVENT_REQUIRED_FIELDS))
+        self.assertTrue(
+            all(fields for fields in EVENT_REQUIRED_FIELDS.values()),
+        )
+
+    def test_event_rejects_missing_business_fields(self):
+        with self.assertRaisesRegex(ValueError, "outline_ready.*必需字段"):
+            ResearchEvent(
+                ResearchEventType.OUTLINE_READY,
+                "session-001",
+                "planning",
+                data={"outline": []},
+            )
 
     def test_event_rejects_unknown_type(self):
         with self.assertRaisesRegex(ValueError, "事件类型"):

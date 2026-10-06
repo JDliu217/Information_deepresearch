@@ -49,6 +49,26 @@ RESEARCH_PHASES = frozenset(
     }
 )
 
+EVENT_REQUIRED_FIELDS = {
+    ResearchEventType.RESEARCH_STARTED: frozenset({"query", "max_iterations"}),
+    ResearchEventType.PHASE_STARTED: frozenset({"agent"}),
+    ResearchEventType.OUTLINE_READY: frozenset(
+        {"outline", "research_questions", "hypotheses", "key_entities", "mind_map"}
+    ),
+    ResearchEventType.RESEARCH_EVIDENCE_READY: frozenset(
+        {"supplementary", "source_count", "fact_count", "sources", "facts", "references"}
+    ),
+    ResearchEventType.DRAFT_READY: frozenset(
+        {"report", "outline", "draft_sections", "revision"}
+    ),
+    ResearchEventType.REVIEW_COMPLETED: frozenset(
+        {"review_result", "critic_feedback", "quality_score"}
+    ),
+    ResearchEventType.RESEARCH_COMPLETED: frozenset(
+        {"report", "quality_score", "references", "review_result", "critic_feedback"}
+    ),
+}
+
 
 @dataclass(frozen=True)
 class ResearchEvent:
@@ -78,6 +98,10 @@ class ResearchEvent:
             raise ValueError("研究事件 iteration 不能小于 0")
         if not isinstance(self.data, dict):
             raise ValueError("研究事件 data 必须是字典")
+        missing_fields = EVENT_REQUIRED_FIELDS[self.type] - self.data.keys()
+        if missing_fields:
+            missing = ", ".join(sorted(missing_fields))
+            raise ValueError(f"{self.type} 缺少必需字段: {missing}")
 
     def to_dict(self) -> dict[str, Any]:
         """转换成可被 API、SSE 或测试直接使用的普通字典。"""
