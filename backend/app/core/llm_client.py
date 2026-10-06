@@ -126,6 +126,48 @@ class MockLLMClient(LLMClient):
                 ],
             }
 
+        if role == "data_analyst":
+            data_points = payload.get("data_points", [])
+            if not data_points:
+                return {"insights": [], "charts": []}
+
+            first_name = str(data_points[0].get("name", "指标")).strip() or "指标"
+            categories = [
+                str(point.get("year") or index)
+                for index, point in enumerate(data_points, start=1)
+            ]
+            values = [point.get("value") for point in data_points]
+            point_ids = [
+                str(point.get("id", "")).strip()
+                for point in data_points
+                if point.get("id")
+            ]
+            return {
+                "insights": [
+                    f"已整理 {len(data_points)} 个结构化数据点，主要指标为“{first_name}”。"
+                ],
+                "charts": [
+                    {
+                        "id": "chart_data_points",
+                        "title": f"{payload.get('query', '研究对象')}数据点概览",
+                        "type": "bar",
+                        "data": {"data_point_ids": point_ids},
+                        "echarts_option": {
+                            "tooltip": {"trigger": "axis"},
+                            "xAxis": {"type": "category", "data": categories},
+                            "yAxis": {"type": "value"},
+                            "series": [
+                                {
+                                    "name": first_name,
+                                    "type": "bar",
+                                    "data": values,
+                                }
+                            ],
+                        },
+                    }
+                ],
+            }
+
         if role == "critic":
             report = str(payload.get("report", "")).strip()
             facts = payload.get("facts", [])
