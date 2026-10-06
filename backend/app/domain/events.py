@@ -11,6 +11,45 @@ from dataclasses import dataclass, field
 from typing import Any
 
 
+class ResearchEventType:
+    """工作流允许对外发布的事件类型。"""
+
+    RESEARCH_STARTED = "research_started"
+    PHASE_STARTED = "phase_started"
+    OUTLINE_READY = "outline_ready"
+    RESEARCH_EVIDENCE_READY = "research_evidence_ready"
+    DRAFT_READY = "draft_ready"
+    REVIEW_COMPLETED = "review_completed"
+    RESEARCH_COMPLETED = "research_completed"
+
+
+EVENT_TYPES = frozenset(
+    {
+        ResearchEventType.RESEARCH_STARTED,
+        ResearchEventType.PHASE_STARTED,
+        ResearchEventType.OUTLINE_READY,
+        ResearchEventType.RESEARCH_EVIDENCE_READY,
+        ResearchEventType.DRAFT_READY,
+        ResearchEventType.REVIEW_COMPLETED,
+        ResearchEventType.RESEARCH_COMPLETED,
+    }
+)
+
+RESEARCH_PHASES = frozenset(
+    {
+        "init",
+        "planning",
+        "researching",
+        "analyzing",
+        "writing",
+        "reviewing",
+        "re_researching",
+        "revising",
+        "completed",
+    }
+)
+
+
 @dataclass(frozen=True)
 class ResearchEvent:
     """一次研究流程进度更新。
@@ -24,6 +63,21 @@ class ResearchEvent:
     phase: str
     iteration: int = 0
     data: dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        """校验所有事件共有的外层字段。"""
+        if not isinstance(self.type, str) or self.type not in EVENT_TYPES:
+            raise ValueError(f"不支持的研究事件类型: {self.type!r}")
+        if not isinstance(self.session_id, str) or not self.session_id.strip():
+            raise ValueError("研究事件 session_id 不能为空")
+        if not isinstance(self.phase, str) or self.phase not in RESEARCH_PHASES:
+            raise ValueError(f"不支持的研究阶段: {self.phase!r}")
+        if isinstance(self.iteration, bool) or not isinstance(self.iteration, int):
+            raise ValueError("研究事件 iteration 必须是整数")
+        if self.iteration < 0:
+            raise ValueError("研究事件 iteration 不能小于 0")
+        if not isinstance(self.data, dict):
+            raise ValueError("研究事件 data 必须是字典")
 
     def to_dict(self) -> dict[str, Any]:
         """转换成可被 API、SSE 或测试直接使用的普通字典。"""
