@@ -49,6 +49,23 @@ class HypothesisFactClient(LLMClient):
         return ""
 
 
+class InvalidDataPointFactClient(LLMClient):
+    async def complete_json(self, role, payload):
+        return {
+            "facts": [
+                {
+                    "content": "包含无效数据点的事实。",
+                    "source_url": payload["sources"][0]["url"],
+                    "confidence": 0.8,
+                    "data_points": [{"value": 100}],
+                }
+            ]
+        }
+
+    async def complete_text(self, role, payload):
+        return ""
+
+
 class FactExtractorAgentTests(unittest.TestCase):
     def test_fact_extractor_turns_raw_sources_into_facts(self):
         async def run_chain():
@@ -78,6 +95,12 @@ class FactExtractorAgentTests(unittest.TestCase):
         )
         self.assertEqual(state.hypotheses[0]["status"], "supported")
         self.assertEqual(len(state.hypotheses[0]["evidence_for"]), 3)
+        self.assertEqual(len(state.data_points), 3)
+        self.assertEqual(
+            {point["name"] for point in state.data_points},
+            {"模拟来源指标"},
+        )
+        self.assertTrue(all(point["id"].startswith("dp_") for point in state.data_points))
 
     def test_fact_extractor_rejects_unknown_source_url(self):
         state = ResearchState("测试问题")
@@ -142,6 +165,15 @@ class FactExtractorAgentTests(unittest.TestCase):
                     HypothesisFactClient("supports", hypothesis_id="missing")
                 ).run(state)
             )
+
+    def test_fact_extractor_rejects_invalid_data_point(self):
+        state = ResearchState("测试问题")
+        state.raw_sources = [
+            {"title": "来源", "url": "https://example.com/1", "snippet": "证据"}
+        ]
+
+        with self.assertRaisesRegex(ValueError, "数据点缺少 name 或 value"):
+            asyncio.run(FactExtractorAgent(InvalidDataPointFactClient()).run(state))
 
 
 if __name__ == "__main__":

@@ -86,7 +86,7 @@ class MockLLMClient(LLMClient):
             facts = []
             hypotheses = payload.get("hypotheses", [])
             hypothesis = hypotheses[0] if hypotheses else None
-            for source in payload.get("sources", []):
+            for index, source in enumerate(payload.get("sources", []), start=1):
                 content = str(source.get("content") or source.get("snippet") or "").strip()
                 url = str(source.get("url", "")).strip()
                 if not content or not url:
@@ -97,6 +97,16 @@ class MockLLMClient(LLMClient):
                     "source_url": url,
                     "source_type": "web",
                     "confidence": 0.7,
+                    "data_points": [
+                        {
+                            "name": "模拟来源指标",
+                            "value": index * 10,
+                            "unit": "单位",
+                            "year": 2024,
+                            "source": str(source.get("title", "")).strip() or url,
+                            "confidence": 0.7,
+                        }
+                    ],
                 }
                 if hypothesis and hypothesis.get("id"):
                     fact["related_hypothesis"] = str(hypothesis["id"])

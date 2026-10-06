@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from app.core.llm_client import LLMClient
+from app.domain.models import DataPoint
 from app.domain.state import ResearchState
 
 from .base import BaseAgent
@@ -37,6 +38,7 @@ class FactExtractorAgent(BaseAgent):
             state.hypotheses,
         )
         state.facts = self._deduplicate_facts(state.facts + facts)
+        self._append_data_points(state.data_points, facts)
         self._apply_hypothesis_evidence(state.hypotheses, facts)
         state.phase = "researching"
         return state
@@ -91,6 +93,66 @@ class FactExtractorAgent(BaseAgent):
                 "source_type": str(item.get("source_type", "web")).strip() or "web",
                 "confidence": confidence,
             }
+            raw_data_points = item.get("data_points", [])
+            if raw_data_points is None:
+                raw_data_points = []
+            if not isinstance(raw_data_points, list):
+                raise ValueError(f"FactExtractor 的第 {index} 个事实 data_points 必须是列表")
+
+            normalized_data_points: list[dict[str, Any]] = []
+            for point_index, raw_point in enumerate(raw_data_points, start=1):
+                if not isinstance(raw_point, dict):
+                    raise ValueError(
+                        f"FactExtractor 的第 {index} 个事实第 {point_index} 个数据点不是对象"
+                    )
+                name = str(raw_point.get("name", "")).strip()
+                value = raw_point.get("value")
+                if not name or value is None or (isinstance(value, str) and not value.strip()):
+                    raise ValueError(
+                        f"FactExtractor 的第 {index} 个事实第 {point_index} 个数据点缺少 name 或 value"
+                    )
+
+                raw_year = raw_point.get("year")
+                year = None
+                if raw_year is not None:
+                    if isinstance(raw_year, bool):
+                        raise ValueError(
+                            f"FactExtractor 的第 {index} 个事实第 {point_index} 个数据点 year 无效"
+                        )
+                    try:
+                        year = int(raw_year)
+                    except (TypeError, ValueError) as exc:
+                        raise ValueError(
+                            f"FactExtractor 的第 {index} 个事实第 {point_index} 个数据点 year 无效"
+                        ) from exc
+
+                try:
+                    point_confidence = float(raw_point.get("confidence", confidence))
+                except (TypeError, ValueError) as exc:
+                    raise ValueError(
+                        f"FactExtractor 的第 {index} 个事实第 {point_index} 个数据点 confidence 无效"
+                    ) from exc
+                if not 0 <= point_confidence <= 1:
+                    raise ValueError(
+                        f"FactExtractor 的第 {index} 个事实第 {point_index} 个数据点 confidence 必须在 0 到 1 之间"
+                    )
+
+                normalized_data_points.append(
+                    {
+                        "name": name,
+                        "value": value,
+                        "unit": str(raw_point.get("unit", "")).strip(),
+                        "year": year,
+                        "source": str(
+                            raw_point.get("source")
+                            or item.get("source_title")
+                            or source_url
+                        ).strip(),
+                        "confidence": point_confidence,
+                    }
+                )
+            fact["data_points"] = normalized_data_points
+
             related_hypothesis = str(item.get("related_hypothesis") or "").strip()
             hypothesis_support = str(item.get("hypothesis_support") or "").strip()
             if related_hypothesis or hypothesis_support:
@@ -115,6 +177,46 @@ class FactExtractorAgent(BaseAgent):
                     fact[field_name] = source_context[field_name]
             validated.append(fact)
         return validated
+
+    @staticmethod
+    def _append_data_points(
+        target: list[dict[str, Any]],
+        facts: list[dict[str, Any]],
+    ) -> None:
+        """把事实中的数据点写入共享状态，并按内容去重。"""
+        seen = {
+            (
+                str(point.get("name", "")).strip(),
+                str(point.get("value", "")).strip(),
+                str(point.get("unit", "")).strip(),
+                str(point.get("year", "")).strip(),
+                str(point.get("source", "")).strip(),
+            )
+            for point in target
+        }
+        for fact in facts:
+            for point in fact.get("data_points", []):
+                key = (
+                    point["name"],
+                    str(point["value"]).strip(),
+                    point["unit"],
+                    str(point["year"] or "").strip(),
+                    point["source"],
+                )
+                if key in seen:
+                    continue
+                target.append(
+                    DataPoint(
+                        id=f"dp_{len(target) + 1}",
+                        name=point["name"],
+                        value=point["value"],
+                        unit=point["unit"],
+                        year=point["year"],
+                        source=point["source"],
+                        confidence=point["confidence"],
+                    ).to_dict()
+                )
+                seen.add(key)
 
     @staticmethod
     def _apply_hypothesis_evidence(
