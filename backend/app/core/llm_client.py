@@ -112,7 +112,19 @@ class MockLLMClient(LLMClient):
                     fact["related_hypothesis"] = str(hypothesis["id"])
                     fact["hypothesis_support"] = "supports"
                 facts.append(fact)
-            return {"facts": facts}
+            query = str(payload.get("query", "")).strip() or "研究对象"
+            return {
+                "facts": facts,
+                "entities_discovered": [
+                    {
+                        "name": query,
+                        "type": "industry",
+                        "relations": ["受政策环境影响", "受市场需求影响"],
+                    },
+                    {"name": "政策环境", "type": "policy", "relations": []},
+                    {"name": "市场需求", "type": "market", "relations": []},
+                ],
+            }
 
         if role == "critic":
             report = str(payload.get("report", "")).strip()

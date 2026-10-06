@@ -37,11 +37,117 @@ class FactExtractorAgent(BaseAgent):
             state.raw_sources,
             state.hypotheses,
         )
+        entities = self._validate_entities(result.get("entities_discovered", []))
         state.facts = self._deduplicate_facts(state.facts + facts)
         self._append_data_points(state.data_points, facts)
         self._apply_hypothesis_evidence(state.hypotheses, facts)
+        self._update_knowledge_graph(state.knowledge_graph, entities)
         state.phase = "researching"
         return state
+
+    @staticmethod
+    def _validate_entities(value: Any) -> list[dict[str, Any]]:
+        """校验 LLM 返回的实体，统一成知识图谱可以使用的形状。"""
+        if value is None:
+            return []
+        if not isinstance(value, list):
+            raise ValueError("FactExtractor 返回的 entities_discovered 必须是列表")
+
+        validated: list[dict[str, Any]] = []
+        for index, item in enumerate(value, start=1):
+            if not isinstance(item, dict):
+                raise ValueError(f"FactExtractor 的第 {index} 个实体不是对象")
+
+            name = str(item.get("name", "")).strip()
+            if not name:
+                raise ValueError(f"FactExtractor 的第 {index} 个实体缺少 name")
+
+            raw_relations = item.get("relations", [])
+            if raw_relations is None:
+                raw_relations = []
+            if not isinstance(raw_relations, list):
+                raise ValueError(
+                    f"FactExtractor 的第 {index} 个实体 relations 必须是列表"
+                )
+
+            relations: list[str] = []
+            for relation_index, relation in enumerate(raw_relations, start=1):
+                if not isinstance(relation, str):
+                    raise ValueError(
+                        f"FactExtractor 的第 {index} 个实体第 {relation_index} 个关系必须是字符串"
+                    )
+                relation = relation.strip()
+                if relation:
+                    relations.append(relation)
+
+            entity_type = str(item.get("type") or "unknown").strip() or "unknown"
+            validated.append(
+                {
+                    "name": name,
+                    "type": entity_type,
+                    "relations": relations,
+                }
+            )
+        return validated
+
+    @staticmethod
+    def _update_knowledge_graph(
+        graph: dict[str, Any],
+        entities: list[dict[str, Any]],
+    ) -> None:
+        """把实体和关系累积到共享知识图谱，并对节点和边去重。"""
+        if not isinstance(graph, dict):
+            raise ValueError("knowledge_graph 必须是对象")
+
+        nodes = graph.setdefault("nodes", [])
+        edges = graph.setdefault("edges", [])
+        if not isinstance(nodes, list) or not isinstance(edges, list):
+            raise ValueError("knowledge_graph 的 nodes 和 edges 必须是列表")
+
+        node_names = {
+            str(node.get("name", "")).strip()
+            for node in nodes
+            if isinstance(node, dict) and node.get("name")
+        }
+        node_ids = {
+            str(node.get("id", "")).strip()
+            for node in nodes
+            if isinstance(node, dict) and node.get("id")
+        }
+        edge_keys = {
+            (
+                str(edge.get("source", "")).strip(),
+                str(edge.get("relation", "")).strip(),
+            )
+            for edge in edges
+            if isinstance(edge, dict)
+        }
+        next_node_number = 1
+
+        for entity in entities:
+            name = entity["name"]
+            if name not in node_names:
+                node_id = f"node_{next_node_number}"
+                while node_id in node_ids:
+                    next_node_number += 1
+                    node_id = f"node_{next_node_number}"
+                nodes.append(
+                    {
+                        "id": node_id,
+                        "name": name,
+                        "type": entity["type"],
+                    }
+                )
+                node_names.add(name)
+                node_ids.add(node_id)
+                next_node_number += 1
+
+            for relation in entity["relations"]:
+                edge_key = (name, relation)
+                if edge_key in edge_keys:
+                    continue
+                edges.append({"source": name, "relation": relation})
+                edge_keys.add(edge_key)
 
     @staticmethod
     def _validate_facts(

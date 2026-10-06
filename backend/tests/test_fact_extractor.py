@@ -66,6 +66,27 @@ class InvalidDataPointFactClient(LLMClient):
         return ""
 
 
+class EntityFactClient(LLMClient):
+    def __init__(self, entities):
+        self.entities = entities
+
+    async def complete_json(self, role, payload):
+        source = payload["sources"][0]
+        return {
+            "facts": [
+                {
+                    "content": "一条用于构建知识图谱的事实。",
+                    "source_url": source["url"],
+                    "confidence": 0.8,
+                }
+            ],
+            "entities_discovered": self.entities,
+        }
+
+    async def complete_text(self, role, payload):
+        return ""
+
+
 class FactExtractorAgentTests(unittest.TestCase):
     def test_fact_extractor_turns_raw_sources_into_facts(self):
         async def run_chain():
@@ -101,6 +122,72 @@ class FactExtractorAgentTests(unittest.TestCase):
             {"模拟来源指标"},
         )
         self.assertTrue(all(point["id"].startswith("dp_") for point in state.data_points))
+
+    def test_fact_extractor_builds_and_deduplicates_knowledge_graph(self):
+        async def run():
+            state = ResearchState("测试问题")
+            state.raw_sources = [
+                {
+                    "title": "来源",
+                    "url": "https://example.com/1",
+                    "snippet": "证据",
+                }
+            ]
+            entities = [
+                {"name": "实体 A", "relations": ["关联实体 B"]},
+                {
+                    "name": "实体 A",
+                    "relations": ["关联实体 B", "关联实体 C"],
+                },
+                {"name": "实体 B", "type": "policy", "relations": []},
+            ]
+            agent = FactExtractorAgent(EntityFactClient(entities))
+            await agent.run(state)
+            await agent.run(state)
+            return state
+
+        state = asyncio.run(run())
+
+        self.assertEqual(
+            {node["name"] for node in state.knowledge_graph["nodes"]},
+            {"实体 A", "实体 B"},
+        )
+        self.assertEqual(
+            {node["id"] for node in state.knowledge_graph["nodes"]},
+            {"node_1", "node_2"},
+        )
+        entity_a = next(
+            node
+            for node in state.knowledge_graph["nodes"]
+            if node["name"] == "实体 A"
+        )
+        self.assertEqual(entity_a["type"], "unknown")
+        self.assertEqual(len(state.knowledge_graph["edges"]), 2)
+        self.assertEqual(
+            {
+                (edge["source"], edge["relation"])
+                for edge in state.knowledge_graph["edges"]
+            },
+            {
+                ("实体 A", "关联实体 B"),
+                ("实体 A", "关联实体 C"),
+            },
+        )
+
+    def test_fact_extractor_rejects_invalid_entity_relations(self):
+        state = ResearchState("测试问题")
+        state.raw_sources = [
+            {"title": "来源", "url": "https://example.com/1", "snippet": "证据"}
+        ]
+
+        with self.assertRaisesRegex(ValueError, "relations 必须是列表"):
+            asyncio.run(
+                FactExtractorAgent(
+                    EntityFactClient(
+                        [{"name": "实体", "relations": "不是列表"}]
+                    )
+                ).run(state)
+            )
 
     def test_fact_extractor_rejects_unknown_source_url(self):
         state = ResearchState("测试问题")
