@@ -234,6 +234,23 @@ class MockLLMClient(LLMClient):
                 if content:
                     lines.extend([f"### {index}. {title}", "", content, ""])
 
+            insights = payload.get("insights", [])
+            if insights:
+                lines.extend(["## 数据洞察", ""])
+                lines.extend(f"- {insight}" for insight in insights)
+                lines.append("")
+
+            charts = payload.get("charts", [])
+            if charts:
+                lines.extend(["## 图表", ""])
+                for chart in charts:
+                    title = str(chart.get("title", "未命名图表")).strip() or "未命名图表"
+                    chart_type = str(
+                        chart.get("chart_type", chart.get("type", "unknown"))
+                    ).strip()
+                    lines.append(f"- {title}（{chart_type}）")
+                lines.append("")
+
             review = payload.get("review_result", {})
             issues = review.get("issues", []) if isinstance(review, dict) else []
             if issues:

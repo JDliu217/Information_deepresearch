@@ -29,8 +29,11 @@ class CriticAgent(BaseAgent):
                 "report": state.final_report,
                 "facts": state.facts,
                 "sources": state.raw_sources,
+                "data_points": state.data_points,
+                "insights": state.insights,
+                "charts": state.charts,
                 "iteration": state.iteration,
-                "instruction": "检查事实是否有来源支撑，并判断报告是否需要补充研究。",
+                "instruction": "检查事实和数据洞察是否有来源支撑，并判断报告是否需要补充研究。",
             },
         )
         review = self._validate_review(result)

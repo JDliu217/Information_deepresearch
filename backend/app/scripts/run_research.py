@@ -43,6 +43,18 @@ def print_state(state: ResearchState) -> None:
         print(f"   来源: {fact['source_url']}")
 
     print("\n" + "=" * 60)
+    print(f"数据洞察（{len(state.insights)} 条）")
+    print("=" * 60)
+    for index, insight in enumerate(state.insights, start=1):
+        print(f"{index}. {insight}")
+
+    print("\n" + "=" * 60)
+    print(f"图表配置（{len(state.charts)} 个）")
+    print("=" * 60)
+    for index, chart in enumerate(state.charts, start=1):
+        print(f"{index}. {chart['title']}（{chart['chart_type']}）")
+
+    print("\n" + "=" * 60)
     print("最终报告")
     print("=" * 60)
     print(state.final_report)

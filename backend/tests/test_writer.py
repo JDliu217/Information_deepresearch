@@ -1,6 +1,7 @@
 import asyncio
 import unittest
 
+from app.agents.data_analyst import DataAnalystAgent
 from app.agents.fact_extractor import FactExtractorAgent
 from app.agents.planner import PlannerAgent
 from app.agents.researcher import ResearcherAgent
@@ -18,6 +19,7 @@ class WriterAgentTests(unittest.TestCase):
             await PlannerAgent(llm).run(state)
             await ResearcherAgent(MockSearchClient()).run(state)
             await FactExtractorAgent(llm).run(state)
+            await DataAnalystAgent(llm).run(state)
             await WriterAgent(llm).run(state)
             return state
 
@@ -26,6 +28,8 @@ class WriterAgentTests(unittest.TestCase):
         self.assertEqual(state.phase, "writing")
         self.assertTrue(state.final_report.startswith("## 执行摘要"))
         self.assertIn("研究发现", state.final_report)
+        self.assertIn("数据洞察", state.final_report)
+        self.assertIn("图表", state.final_report)
         self.assertIn("https://example.com/research/", state.final_report)
         self.assertEqual(
             set(state.draft_sections),

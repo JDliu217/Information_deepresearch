@@ -24,6 +24,8 @@ class RunResearchScriptTests(unittest.TestCase):
         self.assertIn("研究计划", text)
         self.assertIn("搜索来源", text)
         self.assertIn("结构化事实", text)
+        self.assertIn("数据洞察", text)
+        self.assertIn("图表配置", text)
         self.assertIn("最终报告", text)
         self.assertIn("审核结果", text)
 
