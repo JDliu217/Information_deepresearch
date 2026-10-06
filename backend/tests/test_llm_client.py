@@ -54,10 +54,24 @@ class LLMClientTests(unittest.TestCase):
         client = MockLLMClient()
 
         result = asyncio.run(
-            client.complete_text("writer", {"query": "测试行业"})
+            client.complete_text(
+                "writer",
+                {
+                    "query": "测试行业",
+                    "facts": [
+                        {
+                            "content": "测试事实。",
+                            "source_title": "测试来源",
+                            "source_url": "https://example.com/source",
+                        }
+                    ],
+                },
+            )
         )
 
         self.assertIn("测试行业", result)
+        self.assertIn("测试事实", result)
+        self.assertIn("https://example.com/source", result)
 
 
 if __name__ == "__main__":

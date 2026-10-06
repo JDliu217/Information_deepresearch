@@ -100,4 +100,33 @@ class MockLLMClient(LLMClient):
             raise ValueError(f"MockLLMClient 暂时不支持文本角色: {role}")
 
         query = str(payload.get("query", "")).strip()
-        return f"关于“{query}”的研究报告草稿。"
+        if not query:
+            raise ValueError("writer 请求缺少 query")
+
+        facts = payload.get("facts", [])
+        lines = [
+            "## 执行摘要",
+            "",
+            f"本报告围绕“{query}”整理公开资料，并只使用已收集的来源作为证据。",
+            "",
+            "## 研究发现",
+            "",
+        ]
+        if facts:
+            for index, fact in enumerate(facts, start=1):
+                content = str(fact.get("content", "")).strip()
+                title = str(fact.get("source_title", "来源")).strip() or "来源"
+                url = str(fact.get("source_url", "")).strip()
+                lines.append(f"{index}. {content} ([{title}]({url}))")
+        else:
+            lines.append("当前没有收集到可引用的事实，无法形成可靠结论。")
+
+        lines.extend(
+            [
+                "",
+                "## 结论",
+                "",
+                "以上结论需要结合更多官方统计和行业报告继续验证。",
+            ]
+        )
+        return "\n".join(lines)
