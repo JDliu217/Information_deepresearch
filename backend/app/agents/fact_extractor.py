@@ -19,18 +19,18 @@ class FactExtractorAgent(BaseAgent):
         self.llm = llm
 
     async def run(self, state: ResearchState) -> ResearchState:
-        if not state.sources:
+        if not state.raw_sources:
             raise ValueError("没有可供事实提取的来源")
 
         result = await self.llm.complete_json(
             role=self.name,
             payload={
                 "query": state.query,
-                "sources": state.sources,
+                "sources": state.raw_sources,
                 "instruction": "只提取来源正文中明确表达、且可以由同一 URL 支撑的事实。",
             },
         )
-        facts = self._validate_facts(result.get("facts"), state.sources)
+        facts = self._validate_facts(result.get("facts"), state.raw_sources)
         state.facts = self._deduplicate_facts(state.facts + facts)
         state.phase = "researching"
         return state

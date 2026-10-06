@@ -51,7 +51,7 @@ class StreamWorkflowTests(unittest.TestCase):
             [
                 "research_started",
                 "phase_started",
-                "plan_ready",
+                "outline_ready",
                 "phase_started",
                 "research_evidence_ready",
                 "phase_started",
@@ -95,7 +95,7 @@ class StreamWorkflowTests(unittest.TestCase):
         self.assertTrue(evidence_events[1]["supplementary"])
         self.assertEqual(evidence_events[1]["iteration"], 1)
         self.assertEqual(events[-1]["type"], "research_completed")
-        self.assertEqual(events[-1]["review"]["verdict"], "pass")
+        self.assertEqual(events[-1]["review_result"]["verdict"], "pass")
 
 
 if __name__ == "__main__":

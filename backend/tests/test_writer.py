@@ -28,16 +28,16 @@ class WriterAgentTests(unittest.TestCase):
         self.assertIn("研究发现", state.final_report)
         self.assertIn("https://example.com/research/", state.final_report)
 
-    def test_writer_requires_plan(self):
+    def test_writer_requires_outline(self):
         state = ResearchState("测试问题")
         state.facts = [{"content": "事实", "source_url": "https://example.com"}]
 
-        with self.assertRaisesRegex(ValueError, "研究计划"):
+        with self.assertRaisesRegex(ValueError, "研究大纲"):
             asyncio.run(WriterAgent(MockLLMClient()).run(state))
 
     def test_writer_requires_facts(self):
         state = ResearchState("测试问题")
-        state.plan = [{"title": "章节", "description": "描述"}]
+        state.outline = [{"title": "章节", "description": "描述"}]
 
         with self.assertRaisesRegex(ValueError, "事实"):
             asyncio.run(WriterAgent(MockLLMClient()).run(state))

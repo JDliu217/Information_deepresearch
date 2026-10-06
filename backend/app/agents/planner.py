@@ -31,28 +31,28 @@ class PlannerAgent(BaseAgent):
                 "instruction": "请拆分成 2 到 4 个互不重复、可以搜索验证的研究子问题。",
             },
         )
-        plan = self._validate_plan(result.get("plan"))
+        outline = self._validate_outline(result.get("outline"))
         research_questions = self._validate_questions(result.get("research_questions"))
 
-        state.plan = plan
+        state.outline = outline
         state.research_questions = research_questions
         state.phase = "planning"
         return state
 
     @staticmethod
-    def _validate_plan(value: Any) -> list[dict[str, str]]:
-        """确保计划是由标题和描述组成的字典列表。"""
+    def _validate_outline(value: Any) -> list[dict[str, str]]:
+        """确保大纲是由标题和描述组成的字典列表。"""
         if not isinstance(value, list) or not value:
-            raise ValueError("Planner 返回的 plan 必须是非空列表")
+            raise ValueError("Planner 返回的 outline 必须是非空列表")
 
         validated: list[dict[str, str]] = []
         for index, item in enumerate(value, start=1):
             if not isinstance(item, dict):
-                raise ValueError(f"Planner 的第 {index} 个计划不是对象")
+                raise ValueError(f"Planner 的第 {index} 个章节不是对象")
             title = str(item.get("title", "")).strip()
             description = str(item.get("description", "")).strip()
             if not title or not description:
-                raise ValueError(f"Planner 的第 {index} 个计划缺少 title 或 description")
+                raise ValueError(f"Planner 的第 {index} 个章节缺少 title 或 description")
             validated.append({"title": title, "description": description})
         return validated
 

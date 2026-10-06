@@ -34,9 +34,9 @@ class CriticAgentTests(unittest.TestCase):
         state = asyncio.run(run_chain())
 
         self.assertEqual(state.phase, "reviewing")
-        self.assertEqual(state.review["verdict"], "pass")
+        self.assertEqual(state.review_result["verdict"], "pass")
         self.assertEqual(state.quality_score, 8.0)
-        self.assertEqual(state.review["issues"], [])
+        self.assertEqual(state.review_result["issues"], [])
 
     def test_critic_rejects_invalid_result(self):
         state = ResearchState("测试问题")

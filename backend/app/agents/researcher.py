@@ -33,7 +33,7 @@ class ResearcherAgent(BaseAgent):
         if not questions:
             raise ValueError("没有可执行的研究子问题")
 
-        collected_sources = list(state.sources)
+        collected_sources = list(state.raw_sources)
         for question in questions:
             results = await self.search.search(
                 query=question,
@@ -41,13 +41,13 @@ class ResearcherAgent(BaseAgent):
             )
             collected_sources.extend(result.to_dict() for result in results)
 
-        state.sources = self._deduplicate_sources(collected_sources)
+        state.raw_sources = self._deduplicate_sources(collected_sources)
         state.references = [
             {
                 "title": source["title"],
                 "url": source["url"],
             }
-            for source in state.sources
+            for source in state.raw_sources
             if source.get("url")
         ]
         state.pending_search_queries = []

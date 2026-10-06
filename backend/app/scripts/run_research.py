@@ -12,7 +12,7 @@ from app.workflow.research_workflow import ResearchWorkflow
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="运行一次 Iteration 01 DeepResearch")
+    parser = argparse.ArgumentParser(description="运行一次学习版 DeepResearch")
     parser.add_argument(
         "query",
         nargs="?",
@@ -25,13 +25,13 @@ def print_state(state: ResearchState) -> None:
     print("\n" + "=" * 60)
     print("研究计划")
     print("=" * 60)
-    for index, item in enumerate(state.plan, start=1):
+    for index, item in enumerate(state.outline, start=1):
         print(f"{index}. {item['title']}：{item['description']}")
 
     print("\n" + "=" * 60)
-    print(f"搜索来源（{len(state.sources)} 条）")
+    print(f"搜索来源（{len(state.raw_sources)} 条）")
     print("=" * 60)
-    for index, source in enumerate(state.sources, start=1):
+    for index, source in enumerate(state.raw_sources, start=1):
         print(f"{index}. {source['title']}")
         print(f"   URL: {source['url']}")
 
@@ -50,9 +50,9 @@ def print_state(state: ResearchState) -> None:
     print("\n" + "=" * 60)
     print("审核结果")
     print("=" * 60)
-    print(f"结论: {state.review['verdict']}")
+    print(f"结论: {state.review_result['verdict']}")
     print(f"评分: {state.quality_score}/10")
-    print(f"摘要: {state.review['summary']}")
+    print(f"摘要: {state.review_result['summary']}")
     print(f"任务阶段: {state.phase}")
     print(f"会话 ID: {state.session_id}")
 

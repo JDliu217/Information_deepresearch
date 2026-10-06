@@ -50,11 +50,11 @@ class ResearchWorkflowTests(unittest.TestCase):
         )
 
         self.assertEqual(state.phase, "completed")
-        self.assertEqual(state.plan[0]["title"], "现状与定义")
-        self.assertEqual(len(state.sources), 3)
+        self.assertEqual(state.outline[0]["title"], "现状与定义")
+        self.assertEqual(len(state.raw_sources), 3)
         self.assertEqual(len(state.facts), 3)
         self.assertTrue(state.final_report)
-        self.assertEqual(state.review["verdict"], "pass")
+        self.assertEqual(state.review_result["verdict"], "pass")
         self.assertEqual(state.quality_score, 8.0)
 
     def test_workflow_preserves_explicit_session_id(self):
@@ -84,11 +84,11 @@ class ResearchWorkflowTests(unittest.TestCase):
         state = asyncio.run(workflow.run("新能源汽车行业趋势"))
 
         self.assertEqual(state.phase, "completed")
-        self.assertEqual(state.review["verdict"], "pass")
+        self.assertEqual(state.review_result["verdict"], "pass")
         self.assertEqual(state.iteration, 1)
         self.assertEqual(len(search.queries), 4)  # 3 个初始问题 + 1 个补充查询
         self.assertEqual(search.queries[-1], "2025年新能源汽车行业数据")
-        self.assertEqual(len(state.sources), 4)
+        self.assertEqual(len(state.raw_sources), 4)
         self.assertEqual(len(state.facts), 4)
         self.assertIn("2025年新能源汽车行业数据", state.final_report)
 
@@ -107,13 +107,13 @@ class ResearchWorkflowTests(unittest.TestCase):
 
         state = asyncio.run(workflow.run("新能源汽车行业趋势"))
 
-        self.assertEqual(state.review["verdict"], "pass")
+        self.assertEqual(state.review_result["verdict"], "pass")
         self.assertEqual(state.iteration, 1)
         self.assertEqual(len(search.queries), 3)
         self.assertEqual(len(llm.writer_payloads), 2)
         self.assertIn(
             "补充结论与证据之间的说明",
-            llm.writer_payloads[1]["review"]["issues"],
+            llm.writer_payloads[1]["review_result"]["issues"],
         )
         self.assertIn("补充结论与证据之间的说明", state.final_report)
 
@@ -130,8 +130,8 @@ class ResearchWorkflowTests(unittest.TestCase):
 
         self.assertEqual(state.phase, "completed")
         self.assertEqual(state.iteration, 1)
-        self.assertEqual(state.review["verdict"], "needs_revision")
-        self.assertEqual(state.review["issues"], ["仍需改进"])
+        self.assertEqual(state.review_result["verdict"], "needs_revision")
+        self.assertEqual(state.review_result["issues"], ["仍需改进"])
         self.assertEqual(len(llm.writer_payloads), 2)
 
     def test_workflow_rejects_negative_iteration_limit(self):

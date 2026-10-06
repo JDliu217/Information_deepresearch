@@ -28,13 +28,21 @@ class CriticAgent(BaseAgent):
                 "query": state.query,
                 "report": state.final_report,
                 "facts": state.facts,
-                "sources": state.sources,
+                "sources": state.raw_sources,
                 "iteration": state.iteration,
                 "instruction": "检查事实是否有来源支撑，并判断报告是否需要补充研究。",
             },
         )
         review = self._validate_review(result)
-        state.review = review
+        state.review_result = review
+        state.critic_feedback = [
+            {
+                "description": issue,
+                "resolved": False,
+            }
+            for issue in review["issues"]
+        ]
+        state.unresolved_issues = len(state.critic_feedback)
         state.quality_score = review["quality_score"]
         state.phase = "reviewing"
         return state

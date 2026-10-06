@@ -50,7 +50,7 @@ class MockLLMClient(LLMClient):
                 raise ValueError("planner 请求缺少 query")
 
             return {
-                "plan": [
+                "outline": [
                     {
                         "title": "现状与定义",
                         "description": f"明确“{query}”的研究范围和当前现状。",
@@ -138,7 +138,7 @@ class MockLLMClient(LLMClient):
         else:
             lines.append("当前没有收集到可引用的事实，无法形成可靠结论。")
 
-        review = payload.get("review", {})
+        review = payload.get("review_result", {})
         issues = review.get("issues", []) if isinstance(review, dict) else []
         if issues:
             lines.extend(["", "## 根据审核意见修订", ""])

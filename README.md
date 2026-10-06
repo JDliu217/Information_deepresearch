@@ -25,7 +25,7 @@
 
 ```text
 用户问题
-  -> Planner 生成研究计划
+  -> Planner 生成章节大纲
   -> Researcher 搜索来源
   -> FactExtractor 整理带来源的事实
   -> Writer 撰写报告
@@ -41,7 +41,7 @@
 事件由 `backend/app/domain/events.py` 中的 `ResearchEvent` 统一转成普通字典，
 不依赖 Web 框架。当前可以在 Python 内部验证事件顺序；FastAPI 和 SSE 会在之后的步骤加入。
 
-事件类型包括 `research_started`、`phase_started`、`plan_ready`、
+事件类型包括 `research_started`、`phase_started`、`outline_ready`、
 `research_evidence_ready`、`draft_ready`、`review_completed` 和 `research_completed`。
 最终的 `research_completed` 事件包含报告、审核结果、质量评分和引用。
 

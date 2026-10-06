@@ -20,9 +20,9 @@ class ResearcherAgentTests(unittest.TestCase):
 
         self.assertEqual(state.phase, "researching")
         self.assertEqual(len(state.research_questions), 3)
-        self.assertEqual(len(state.sources), 3)
+        self.assertEqual(len(state.raw_sources), 3)
         self.assertEqual(len(state.references), 3)
-        self.assertTrue(all(source["url"].startswith("https://") for source in state.sources))
+        self.assertTrue(all(source["url"].startswith("https://") for source in state.raw_sources))
 
     def test_researcher_deduplicates_existing_source_urls(self):
         async def run():
@@ -32,7 +32,7 @@ class ResearcherAgentTests(unittest.TestCase):
 
         state = asyncio.run(run())
 
-        self.assertEqual(len(state.sources), 1)
+        self.assertEqual(len(state.raw_sources), 1)
         self.assertEqual(len(state.references), 1)
 
     def test_researcher_rejects_missing_questions(self):

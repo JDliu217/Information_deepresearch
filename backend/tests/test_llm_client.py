@@ -18,7 +18,7 @@ class LLMClientTests(unittest.TestCase):
             )
         )
 
-        self.assertEqual(len(result["plan"]), 3)
+        self.assertEqual(len(result["outline"]), 3)
         self.assertEqual(len(result["research_questions"]), 3)
         self.assertIn("新能源汽车", result["research_questions"][0])
 

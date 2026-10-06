@@ -17,8 +17,8 @@ class WriterAgent(BaseAgent):
         self.llm = llm
 
     async def run(self, state: ResearchState) -> ResearchState:
-        if not state.plan:
-            raise ValueError("没有可用于写作的研究计划")
+        if not state.outline:
+            raise ValueError("没有可用于写作的研究大纲")
         if not state.facts:
             raise ValueError("没有可用于写作的事实")
 
@@ -26,10 +26,10 @@ class WriterAgent(BaseAgent):
             role=self.name,
             payload={
                 "query": state.query,
-                "plan": state.plan,
+                "outline": state.outline,
                 "facts": state.facts,
                 "references": state.references,
-                "review": state.review,
+                "review_result": state.review_result,
                 "iteration": state.iteration,
                 "instruction": "生成带 Markdown 标题和可点击来源链接的研究报告；若有审核意见，逐条处理。",
             },

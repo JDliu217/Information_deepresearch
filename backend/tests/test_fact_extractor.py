@@ -26,7 +26,7 @@ class BrokenFactClient(LLMClient):
 
 
 class FactExtractorAgentTests(unittest.TestCase):
-    def test_fact_extractor_turns_sources_into_facts(self):
+    def test_fact_extractor_turns_raw_sources_into_facts(self):
         async def run_chain():
             state = ResearchState("中国新能源汽车行业的发展趋势是什么？")
             await PlannerAgent(MockLLMClient()).run(state)
@@ -37,14 +37,14 @@ class FactExtractorAgentTests(unittest.TestCase):
         state = asyncio.run(run_chain())
 
         self.assertEqual(state.phase, "researching")
-        self.assertEqual(len(state.sources), 3)
+        self.assertEqual(len(state.raw_sources), 3)
         self.assertEqual(len(state.facts), 3)
         self.assertTrue(all(fact["source_url"] for fact in state.facts))
         self.assertTrue(all(0 <= fact["confidence"] <= 1 for fact in state.facts))
 
     def test_fact_extractor_rejects_unknown_source_url(self):
         state = ResearchState("测试问题")
-        state.sources = [
+        state.raw_sources = [
             {
                 "title": "已知来源",
                 "url": "https://known.example.com",

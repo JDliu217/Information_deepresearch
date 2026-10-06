@@ -101,8 +101,8 @@ class ResearchWorkflow:
         await self.planner.run(state)
         yield self._event(
             state,
-            "plan_ready",
-            plan=state.plan,
+            "outline_ready",
+            outline=state.outline,
             research_questions=state.research_questions,
         )
 
@@ -133,20 +133,21 @@ class ResearchWorkflow:
             yield self._event(
                 state,
                 "review_completed",
-                review=state.review,
+                review_result=state.review_result,
+                critic_feedback=state.critic_feedback,
                 quality_score=state.quality_score,
             )
 
-            if state.review["verdict"] == "pass":
+            if state.review_result["verdict"] == "pass":
                 break
             if state.iteration >= state.max_iterations:
                 break
 
             state.iteration += 1
-            if state.review["needs_more_research"]:
+            if state.review_result["needs_more_research"]:
                 state.pending_search_queries = (
-                    state.review["search_queries"]
-                    or state.review["issues"]
+                    state.review_result["search_queries"]
+                    or state.review_result["issues"]
                     or state.research_questions
                 )
                 async for event in self._run_research_phase(
@@ -155,7 +156,7 @@ class ResearchWorkflow:
                 ):
                     yield event
 
-            # 如果无需新搜索，Writer 根据 state.review 做内容修订；
+            # 如果无需新搜索，Writer 根据 review_result 做内容修订；
             # 如果补充了证据，则 Writer 同时整合新事实和审核意见。
             yield self._event(
                 state,
@@ -179,7 +180,8 @@ class ResearchWorkflow:
             report=state.final_report,
             quality_score=state.quality_score,
             references=state.references,
-            review=state.review,
+            review_result=state.review_result,
+            critic_feedback=state.critic_feedback,
         )
 
     async def _run_research_phase(
@@ -202,9 +204,9 @@ class ResearchWorkflow:
             state,
             "research_evidence_ready",
             supplementary=supplementary,
-            source_count=len(state.sources),
+            source_count=len(state.raw_sources),
             fact_count=len(state.facts),
-            sources=state.sources,
+            sources=state.raw_sources,
             facts=state.facts,
             references=state.references,
         )
