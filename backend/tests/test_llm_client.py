@@ -22,6 +22,28 @@ class LLMClientTests(unittest.TestCase):
         self.assertEqual(len(result["research_questions"]), 3)
         self.assertIn("新能源汽车", result["research_questions"][0])
 
+    def test_mock_fact_extractor_returns_source_grounded_facts(self):
+        client = MockLLMClient()
+
+        result = asyncio.run(
+            client.complete_json(
+                "fact_extractor",
+                {
+                    "query": "测试行业",
+                    "sources": [
+                        {
+                            "title": "测试来源",
+                            "url": "https://example.com/source",
+                            "content": "测试来源中的明确事实。",
+                        }
+                    ],
+                },
+            )
+        )
+
+        self.assertEqual(len(result["facts"]), 1)
+        self.assertEqual(result["facts"][0]["source_url"], "https://example.com/source")
+
     def test_mock_client_rejects_unknown_role(self):
         client = MockLLMClient()
 

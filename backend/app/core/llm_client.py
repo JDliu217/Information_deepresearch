@@ -44,34 +44,52 @@ class MockLLMClient(LLMClient):
         role: str,
         payload: dict[str, Any],
     ) -> dict[str, Any]:
-        if role != "planner":
-            raise ValueError(f"MockLLMClient 暂时不支持角色: {role}")
+        if role == "planner":
+            query = str(payload.get("query", "")).strip()
+            if not query:
+                raise ValueError("planner 请求缺少 query")
 
-        query = str(payload.get("query", "")).strip()
-        if not query:
-            raise ValueError("planner 请求缺少 query")
+            return {
+                "plan": [
+                    {
+                        "title": "现状与定义",
+                        "description": f"明确“{query}”的研究范围和当前现状。",
+                    },
+                    {
+                        "title": "问题与证据",
+                        "description": "整理公开来源中的事实、数据和主要争议。",
+                    },
+                    {
+                        "title": "趋势与建议",
+                        "description": "根据已有证据判断未来趋势并提出建议。",
+                    },
+                ],
+                "research_questions": [
+                    f"{query} 的当前现状和关键定义是什么？",
+                    f"{query} 面临哪些主要问题，有哪些公开证据？",
+                    f"{query} 的未来趋势和改进建议是什么？",
+                ],
+            }
 
-        return {
-            "plan": [
-                {
-                    "title": "现状与定义",
-                    "description": f"明确“{query}”的研究范围和当前现状。",
-                },
-                {
-                    "title": "问题与证据",
-                    "description": "整理公开来源中的事实、数据和主要争议。",
-                },
-                {
-                    "title": "趋势与建议",
-                    "description": "根据已有证据判断未来趋势并提出建议。",
-                },
-            ],
-            "research_questions": [
-                f"{query} 的当前现状和关键定义是什么？",
-                f"{query} 面临哪些主要问题，有哪些公开证据？",
-                f"{query} 的未来趋势和改进建议是什么？",
-            ],
-        }
+        if role == "fact_extractor":
+            facts = []
+            for source in payload.get("sources", []):
+                content = str(source.get("content") or source.get("snippet") or "").strip()
+                url = str(source.get("url", "")).strip()
+                if not content or not url:
+                    continue
+                facts.append(
+                    {
+                        "content": content,
+                        "source_title": str(source.get("title", "")).strip(),
+                        "source_url": url,
+                        "source_type": "web",
+                        "confidence": 0.7,
+                    }
+                )
+            return {"facts": facts}
+
+        raise ValueError(f"MockLLMClient 暂时不支持角色: {role}")
 
     async def complete_text(
         self,
