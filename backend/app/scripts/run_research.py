@@ -1,0 +1,75 @@
+"""从命令行运行一次 Mock DeepResearch。"""
+
+from __future__ import annotations
+
+import argparse
+import asyncio
+
+from app.core.llm_client import MockLLMClient
+from app.core.search_client import MockSearchClient
+from app.domain.state import ResearchState
+from app.workflow.research_workflow import ResearchWorkflow
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="运行一次 Iteration 01 DeepResearch")
+    parser.add_argument(
+        "query",
+        nargs="?",
+        help="研究问题；不传时会进入交互式输入",
+    )
+    return parser
+
+
+def print_state(state: ResearchState) -> None:
+    print("\n" + "=" * 60)
+    print("研究计划")
+    print("=" * 60)
+    for index, item in enumerate(state.plan, start=1):
+        print(f"{index}. {item['title']}：{item['description']}")
+
+    print("\n" + "=" * 60)
+    print(f"搜索来源（{len(state.sources)} 条）")
+    print("=" * 60)
+    for index, source in enumerate(state.sources, start=1):
+        print(f"{index}. {source['title']}")
+        print(f"   URL: {source['url']}")
+
+    print("\n" + "=" * 60)
+    print(f"结构化事实（{len(state.facts)} 条）")
+    print("=" * 60)
+    for index, fact in enumerate(state.facts, start=1):
+        print(f"{index}. {fact['content']}")
+        print(f"   来源: {fact['source_url']}")
+
+    print("\n" + "=" * 60)
+    print("最终报告")
+    print("=" * 60)
+    print(state.final_report)
+
+    print("\n" + "=" * 60)
+    print("审核结果")
+    print("=" * 60)
+    print(f"结论: {state.review['verdict']}")
+    print(f"评分: {state.quality_score}/10")
+    print(f"摘要: {state.review['summary']}")
+    print(f"任务阶段: {state.phase}")
+    print(f"会话 ID: {state.session_id}")
+
+
+async def run(query: str) -> ResearchState:
+    workflow = ResearchWorkflow(MockLLMClient(), MockSearchClient())
+    return await workflow.run(query)
+
+
+def main() -> None:
+    args = build_parser().parse_args()
+    query = (args.query or input("请输入研究问题：")).strip()
+    if not query:
+        raise SystemExit("研究问题不能为空")
+    state = asyncio.run(run(query))
+    print_state(state)
+
+
+if __name__ == "__main__":
+    main()

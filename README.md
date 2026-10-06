@@ -20,3 +20,18 @@
 ## 学习方式
 
 每建立一个文件，先理解它的职责，再连接到下一个文件。不要一开始复制原项目的全部代码。
+
+## 命令行运行
+
+在项目根目录执行：
+
+```powershell
+$env:PYTHONPATH = "backend"
+python -m app.scripts.run_research "中国新能源汽车行业的发展趋势是什么？"
+```
+
+不传问题时，会进入交互式输入：
+
+```powershell
+python -m app.scripts.run_research
+```
