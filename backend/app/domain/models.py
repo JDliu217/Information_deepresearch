@@ -18,7 +18,16 @@ HypothesisStatus = Literal[
     "refuted",
     "partially_supported",
 ]
-ChartType = Literal["line", "bar", "pie", "scatter", "table", "heatmap"]
+ChartType = Literal[
+    "line",
+    "bar",
+    "pie",
+    "scatter",
+    "table",
+    "heatmap",
+    "horizontal_bar",
+    "radar",
+]
 IssueType = Literal[
     "missing_source",
     "logic_error",
@@ -90,6 +99,7 @@ class Chart:
     title: str
     chart_type: ChartType
     data: dict[str, Any] = field(default_factory=dict)
+    echarts_option: dict[str, Any] = field(default_factory=dict)
     code: str = ""
     image_path: str | None = None
     image_base64: str | None = None

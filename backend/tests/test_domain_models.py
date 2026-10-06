@@ -50,12 +50,17 @@ class DomainModelTests(unittest.TestCase):
             title="市场规模趋势",
             chart_type="line",
             data={"x": [2024, 2025], "y": [100, 120.5]},
+            echarts_option={
+                "xAxis": {"type": "category"},
+                "series": [{"type": "line", "data": [100, 120.5]}],
+            },
             section_id="sec-1",
         )
 
         self.assertEqual(data_point.to_dict()["year"], 2025)
         self.assertEqual(data_point.to_dict()["confidence"], 0.9)
         self.assertEqual(chart.to_dict()["chart_type"], "line")
+        self.assertEqual(chart.to_dict()["echarts_option"]["series"][0]["type"], "line")
         self.assertEqual(chart.to_dict()["section_id"], "sec-1")
 
     def test_critic_feedback_starts_unresolved(self):
