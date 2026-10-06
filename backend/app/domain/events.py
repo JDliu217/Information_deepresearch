@@ -18,6 +18,7 @@ class ResearchEventType:
     PHASE_STARTED = "phase_started"
     OUTLINE_READY = "outline_ready"
     RESEARCH_EVIDENCE_READY = "research_evidence_ready"
+    ANALYSIS_READY = "analysis_ready"
     DRAFT_READY = "draft_ready"
     REVIEW_COMPLETED = "review_completed"
     RESEARCH_COMPLETED = "research_completed"
@@ -29,6 +30,7 @@ EVENT_TYPES = frozenset(
         ResearchEventType.PHASE_STARTED,
         ResearchEventType.OUTLINE_READY,
         ResearchEventType.RESEARCH_EVIDENCE_READY,
+        ResearchEventType.ANALYSIS_READY,
         ResearchEventType.DRAFT_READY,
         ResearchEventType.REVIEW_COMPLETED,
         ResearchEventType.RESEARCH_COMPLETED,
@@ -58,6 +60,9 @@ EVENT_REQUIRED_FIELDS = {
     ResearchEventType.RESEARCH_EVIDENCE_READY: frozenset(
         {"supplementary", "source_count", "fact_count", "sources", "facts", "references"}
     ),
+    ResearchEventType.ANALYSIS_READY: frozenset(
+        {"insights", "data_points", "charts", "insight_count", "chart_count"}
+    ),
     ResearchEventType.DRAFT_READY: frozenset(
         {"report", "outline", "draft_sections", "revision"}
     ),
@@ -65,7 +70,16 @@ EVENT_REQUIRED_FIELDS = {
         {"review_result", "critic_feedback", "quality_score"}
     ),
     ResearchEventType.RESEARCH_COMPLETED: frozenset(
-        {"report", "quality_score", "references", "review_result", "critic_feedback"}
+        {
+            "report",
+            "quality_score",
+            "references",
+            "review_result",
+            "critic_feedback",
+            "insights",
+            "data_points",
+            "charts",
+        }
     ),
 }
 

@@ -12,6 +12,7 @@ from app.domain.events import (
 class ResearchEventTests(unittest.TestCase):
     def test_event_type_constants_are_registered(self):
         self.assertIn(ResearchEventType.OUTLINE_READY, EVENT_TYPES)
+        self.assertIn(ResearchEventType.ANALYSIS_READY, EVENT_TYPES)
         self.assertIn("planning", RESEARCH_PHASES)
 
     def test_event_to_dict_keeps_common_fields_and_data(self):

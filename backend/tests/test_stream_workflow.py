@@ -55,6 +55,8 @@ class StreamWorkflowTests(unittest.TestCase):
                 "phase_started",
                 "research_evidence_ready",
                 "phase_started",
+                "analysis_ready",
+                "phase_started",
                 "draft_ready",
                 "phase_started",
                 "review_completed",
@@ -68,14 +70,20 @@ class StreamWorkflowTests(unittest.TestCase):
         self.assertEqual(events[3]["phase"], "researching")
         self.assertEqual(events[4]["source_count"], 3)
         self.assertEqual(events[4]["fact_count"], 3)
+        self.assertEqual(events[5]["phase"], "analyzing")
+        self.assertEqual(events[6]["insight_count"], 1)
+        self.assertEqual(events[6]["chart_count"], 1)
         self.assertEqual(
-            set(events[6]["draft_sections"]),
+            set(events[8]["draft_sections"]),
             {"sec_1", "sec_2", "sec_3"},
         )
         self.assertEqual(events[-1]["phase"], "completed")
         self.assertIn("## 执行摘要", events[-1]["report"])
         self.assertEqual(events[-1]["quality_score"], 8.0)
         self.assertEqual(len(events[-1]["references"]), 3)
+        self.assertEqual(len(events[-1]["insights"]), 1)
+        self.assertEqual(len(events[-1]["data_points"]), 3)
+        self.assertEqual(len(events[-1]["charts"]), 1)
 
     def test_stream_marks_supplementary_research_iteration(self):
         llm = SequencedReviewLLM(

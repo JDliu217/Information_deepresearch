@@ -7,6 +7,7 @@ from typing import Any
 from uuid import uuid4
 
 from app.agents.critic import CriticAgent
+from app.agents.data_analyst import DataAnalystAgent
 from app.agents.fact_extractor import FactExtractorAgent
 from app.agents.planner import PlannerAgent
 from app.agents.researcher import ResearcherAgent
@@ -38,6 +39,7 @@ class ResearchWorkflow:
         self.planner = PlannerAgent(llm)
         self.researcher = ResearcherAgent(search, results_per_question)
         self.fact_extractor = FactExtractorAgent(llm)
+        self.data_analyst = DataAnalystAgent(llm)
         self.writer = WriterAgent(llm)
         self.critic = CriticAgent(llm)
 
@@ -189,6 +191,9 @@ class ResearchWorkflow:
             references=state.references,
             review_result=state.review_result,
             critic_feedback=state.critic_feedback,
+            insights=state.insights,
+            data_points=state.data_points,
+            charts=state.charts,
         )
 
     async def _run_research_phase(
@@ -216,6 +221,22 @@ class ResearchWorkflow:
             sources=state.raw_sources,
             facts=state.facts,
             references=state.references,
+        )
+        yield self._event(
+            state,
+            "phase_started",
+            phase="analyzing",
+            agent=self.data_analyst.name,
+        )
+        await self.data_analyst.run(state)
+        yield self._event(
+            state,
+            "analysis_ready",
+            insights=state.insights,
+            data_points=state.data_points,
+            charts=state.charts,
+            insight_count=len(state.insights),
+            chart_count=len(state.charts),
         )
 
     @staticmethod
