@@ -20,7 +20,8 @@ class ResearchState:
     query: str
     session_id: str = field(default_factory=lambda: str(uuid4()))
 
-    # 当前阶段：init / planning / researching / writing / reviewing / completed
+    # 当前阶段：init / planning / researching / analyzing / writing /
+    # reviewing / re_researching / revising / completed
     phase: str = "init"
 
     # 审核循环次数
@@ -29,18 +30,37 @@ class ResearchState:
 
     # 规划结果
     plan: list[dict[str, Any]] = field(default_factory=list)
+    # V2 章节大纲。当前仍用字典保存，后续 Planner 会逐步使用 Section。
+    outline: list[dict[str, Any]] = field(default_factory=list)
     research_questions: list[str] = field(default_factory=list)
+    key_entities: list[str] = field(default_factory=list)
+    hypotheses: list[dict[str, Any]] = field(default_factory=list)
+    mind_map: dict[str, Any] = field(default_factory=dict)
+    knowledge_graph: dict[str, Any] = field(
+        default_factory=lambda: {"nodes": [], "edges": []}
+    )
     pending_search_queries: list[str] = field(default_factory=list)
 
     # 研究证据
     sources: list[dict[str, Any]] = field(default_factory=list)
+    # raw_sources 保留原始搜索结果，sources 继续兼容 iteration-01 Agent。
+    raw_sources: list[dict[str, Any]] = field(default_factory=list)
     facts: list[dict[str, Any]] = field(default_factory=list)
+    data_points: list[dict[str, Any]] = field(default_factory=list)
+    insights: list[str] = field(default_factory=list)
     references: list[dict[str, Any]] = field(default_factory=list)
 
     # 写作和审核结果
+    draft_sections: dict[str, str] = field(default_factory=dict)
     final_report: str = ""
+    charts: list[dict[str, Any]] = field(default_factory=list)
+    code_executions: list[dict[str, Any]] = field(default_factory=list)
     review: dict[str, Any] = field(default_factory=dict)
+    critic_feedback: list[dict[str, Any]] = field(default_factory=list)
+    unresolved_issues: int = 0
     quality_score: float = 0.0
 
-    # 错误记录
+    # 运行记录
+    logs: list[dict[str, Any]] = field(default_factory=list)
+    messages: list[dict[str, Any]] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
