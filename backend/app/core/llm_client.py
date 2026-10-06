@@ -89,6 +89,22 @@ class MockLLMClient(LLMClient):
                 )
             return {"facts": facts}
 
+        if role == "critic":
+            report = str(payload.get("report", "")).strip()
+            facts = payload.get("facts", [])
+            sources = payload.get("sources", [])
+            if not report:
+                raise ValueError("critic 请求缺少 report")
+
+            passed = bool(facts and sources and "http" in report)
+            return {
+                "verdict": "pass" if passed else "needs_revision",
+                "quality_score": 8.0 if passed else 4.0,
+                "summary": "报告中的事实都关联了来源。" if passed else "报告缺少足够的可验证证据。",
+                "needs_more_research": not passed,
+                "issues": [] if passed else ["需要补充带来源的事实"],
+            }
+
         raise ValueError(f"MockLLMClient 暂时不支持角色: {role}")
 
     async def complete_text(

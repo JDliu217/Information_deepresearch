@@ -44,6 +44,24 @@ class LLMClientTests(unittest.TestCase):
         self.assertEqual(len(result["facts"]), 1)
         self.assertEqual(result["facts"][0]["source_url"], "https://example.com/source")
 
+    def test_mock_critic_approves_cited_report(self):
+        client = MockLLMClient()
+
+        result = asyncio.run(
+            client.complete_json(
+                "critic",
+                {
+                    "query": "测试行业",
+                    "report": "报告内容 https://example.com/source",
+                    "facts": [{"content": "事实"}],
+                    "sources": [{"url": "https://example.com/source"}],
+                },
+            )
+        )
+
+        self.assertEqual(result["verdict"], "pass")
+        self.assertEqual(result["quality_score"], 8.0)
+
     def test_mock_client_rejects_unknown_role(self):
         client = MockLLMClient()
 
