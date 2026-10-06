@@ -131,6 +131,57 @@ class MockLLMClient(LLMClient):
         if not query:
             raise ValueError("writer 请求缺少 query")
 
+        if payload.get("mode") == "section":
+            section = payload.get("section", {})
+            title = str(section.get("title", "本章节")).strip() or "本章节"
+            facts = payload.get("facts", [])
+            lines = [f"本章节围绕“{title}”整理研究证据。"]
+            for fact in facts:
+                content = str(fact.get("content", "")).strip()
+                if not content:
+                    continue
+                source_title = str(fact.get("source_title", "来源")).strip() or "来源"
+                source_url = str(fact.get("source_url", "")).strip()
+                citation = f" ([{source_title}]({source_url}))" if source_url else ""
+                lines.append(f"- {content}{citation}")
+            if len(lines) == 1:
+                lines.append("当前章节还没有可引用的事实。")
+            return "\n".join(lines)
+
+        if payload.get("mode") == "report":
+            outline = payload.get("outline", [])
+            draft_sections = payload.get("draft_sections", {})
+            lines = [
+                "## 执行摘要",
+                "",
+                f"本报告围绕“{query}”整理公开资料，并按研究大纲组织可验证证据。",
+                "",
+                "## 研究发现",
+                "",
+            ]
+            for index, section in enumerate(outline, start=1):
+                section_id = str(section.get("id", f"sec_{index}")).strip()
+                title = str(section.get("title", f"第 {index} 节")).strip()
+                content = str(draft_sections.get(section_id, "")).strip()
+                if content:
+                    lines.extend([f"### {index}. {title}", "", content, ""])
+
+            review = payload.get("review_result", {})
+            issues = review.get("issues", []) if isinstance(review, dict) else []
+            if issues:
+                lines.extend(["## 根据审核意见修订", ""])
+                lines.extend(f"- 已处理：{issue}" for issue in issues)
+                lines.append("")
+
+            lines.extend(
+                [
+                    "## 结论",
+                    "",
+                    "以上结论需要结合更多官方统计和行业报告继续验证。",
+                ]
+            )
+            return "\n".join(lines)
+
         facts = payload.get("facts", [])
         lines = [
             "## 执行摘要",

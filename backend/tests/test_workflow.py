@@ -110,10 +110,13 @@ class ResearchWorkflowTests(unittest.TestCase):
         self.assertEqual(state.review_result["verdict"], "pass")
         self.assertEqual(state.iteration, 1)
         self.assertEqual(len(search.queries), 3)
-        self.assertEqual(len(llm.writer_payloads), 2)
+        report_payloads = [
+            payload for payload in llm.writer_payloads if payload.get("mode") == "report"
+        ]
+        self.assertEqual(len(report_payloads), 2)
         self.assertIn(
             "补充结论与证据之间的说明",
-            llm.writer_payloads[1]["review_result"]["issues"],
+            report_payloads[1]["review_result"]["issues"],
         )
         self.assertIn("补充结论与证据之间的说明", state.final_report)
 
@@ -132,7 +135,10 @@ class ResearchWorkflowTests(unittest.TestCase):
         self.assertEqual(state.iteration, 1)
         self.assertEqual(state.review_result["verdict"], "needs_revision")
         self.assertEqual(state.review_result["issues"], ["仍需改进"])
-        self.assertEqual(len(llm.writer_payloads), 2)
+        self.assertEqual(
+            len([payload for payload in llm.writer_payloads if payload.get("mode") == "report"]),
+            2,
+        )
 
     def test_workflow_rejects_negative_iteration_limit(self):
         with self.assertRaisesRegex(ValueError, "max_iterations"):

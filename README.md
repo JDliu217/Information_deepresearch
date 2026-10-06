@@ -15,6 +15,7 @@
 ## 当前迭代
 
 - iteration-01：建立研究状态、规划、搜索、写作和审核的最小链路。
+- iteration-02（进行中）：对齐 V2 领域字段；来源、事实、章节草稿和进度事件可以按章节追踪。
 - 后续迭代：加入结构化数据分析、图表、检查点、本地知识库和简化前端。
 
 ## 学习方式
@@ -26,9 +27,9 @@
 ```text
 用户问题
   -> Planner 生成章节大纲
-  -> Researcher 搜索来源
-  -> FactExtractor 整理带来源的事实
-  -> Writer 撰写报告
+  -> Researcher 按章节查询搜索来源
+  -> FactExtractor 整理带章节关联的事实
+  -> Writer 逐章生成草稿，再整合报告
   -> Critic 审核并决定通过、补充搜索或修订
   -> 返回最终报告、评分和引用
 ```
@@ -43,6 +44,7 @@
 
 事件类型包括 `research_started`、`phase_started`、`outline_ready`、
 `research_evidence_ready`、`draft_ready`、`review_completed` 和 `research_completed`。
+`draft_ready` 事件还包含 `outline` 和 `draft_sections`，可以按章节读取中间结果。
 最终的 `research_completed` 事件包含报告、审核结果、质量评分和引用。
 
 测试事件流：

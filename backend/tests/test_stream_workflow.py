@@ -68,6 +68,10 @@ class StreamWorkflowTests(unittest.TestCase):
         self.assertEqual(events[3]["phase"], "researching")
         self.assertEqual(events[4]["source_count"], 3)
         self.assertEqual(events[4]["fact_count"], 3)
+        self.assertEqual(
+            set(events[6]["draft_sections"]),
+            {"sec_1", "sec_2", "sec_3"},
+        )
         self.assertEqual(events[-1]["phase"], "completed")
         self.assertIn("## 执行摘要", events[-1]["report"])
         self.assertEqual(events[-1]["quality_score"], 8.0)

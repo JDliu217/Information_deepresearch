@@ -18,7 +18,7 @@ from app.domain.state import ResearchState
 
 
 class ResearchWorkflow:
-    """Iteration 01 的最小研究编排器。
+    """学习版 DeepResearch 的研究编排器。
 
     每一步都显式写出来，便于学习状态如何在 Agent 之间流动。
     ``run`` 适合一次性拿到结果，``stream`` 适合逐步消费进度事件。
@@ -122,6 +122,8 @@ class ResearchWorkflow:
             state,
             "draft_ready",
             report=state.final_report,
+            outline=state.outline,
+            draft_sections=state.draft_sections,
             revision=False,
         )
 
@@ -173,6 +175,8 @@ class ResearchWorkflow:
                 state,
                 "draft_ready",
                 report=state.final_report,
+                outline=state.outline,
+                draft_sections=state.draft_sections,
                 revision=True,
             )
 
