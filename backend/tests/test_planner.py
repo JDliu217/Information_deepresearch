@@ -25,6 +25,10 @@ class PlannerAgentTests(unittest.TestCase):
         self.assertEqual(result.phase, "planning")
         self.assertEqual(len(result.outline), 3)
         self.assertEqual(len(result.research_questions), 3)
+        self.assertEqual(result.outline[0]["id"], "sec_1")
+        self.assertEqual(result.outline[0]["status"], "pending")
+        self.assertEqual(len(result.hypotheses), 1)
+        self.assertEqual(result.hypotheses[0]["status"], "unverified")
         self.assertIn("新能源汽车", result.outline[0]["description"])
 
     def test_planner_rejects_empty_query(self):

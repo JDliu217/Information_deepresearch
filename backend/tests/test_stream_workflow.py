@@ -63,6 +63,8 @@ class StreamWorkflowTests(unittest.TestCase):
         )
         self.assertTrue(all(event["session_id"] == "stream-001" for event in events))
         self.assertEqual(events[1]["phase"], "planning")
+        self.assertEqual(len(events[2]["outline"]), 3)
+        self.assertEqual(events[2]["hypotheses"][0]["status"], "unverified")
         self.assertEqual(events[3]["phase"], "researching")
         self.assertEqual(events[4]["source_count"], 3)
         self.assertEqual(events[4]["fact_count"], 3)

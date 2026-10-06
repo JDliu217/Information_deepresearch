@@ -104,6 +104,9 @@ class ResearchWorkflow:
             "outline_ready",
             outline=state.outline,
             research_questions=state.research_questions,
+            hypotheses=state.hypotheses,
+            key_entities=state.key_entities,
+            mind_map=state.mind_map,
         )
 
         async for event in self._run_research_phase(state, supplementary=False):

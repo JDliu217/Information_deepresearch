@@ -20,6 +20,7 @@ class LLMClientTests(unittest.TestCase):
 
         self.assertEqual(len(result["outline"]), 3)
         self.assertEqual(len(result["research_questions"]), 3)
+        self.assertEqual(result["hypotheses"][0]["status"], "unverified")
         self.assertIn("新能源汽车", result["research_questions"][0])
 
     def test_mock_fact_extractor_returns_source_grounded_facts(self):

@@ -69,6 +69,14 @@ class MockLLMClient(LLMClient):
                     f"{query} 面临哪些主要问题，有哪些公开证据？",
                     f"{query} 的未来趋势和改进建议是什么？",
                 ],
+                "hypotheses": [
+                    {
+                        "id": "h_1",
+                        "content": f"{query} 的发展趋势会受到政策和市场需求共同影响。",
+                        "status": "unverified",
+                    }
+                ],
+                "key_entities": [],
             }
 
         if role == "fact_extractor":
