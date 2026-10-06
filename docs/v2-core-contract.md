@@ -25,7 +25,7 @@ V2 的核心研究行为。
 | --- | --- | --- |
 | ChiefArchitect | `PlannerAgent` | 已有简化版 |
 | DeepScout | `ResearcherAgent` + `FactExtractorAgent` | 已有简化版 |
-| DataAnalyst | 待建立 `DataAnalystAgent` | 未实现 |
+| DataAnalyst | `DataAnalystAgent` | 已有 Mock 版：从数据点生成洞察和 ECharts 配置 |
 | CodeWizard | 待建立 `CodeWizardAgent` | 未实现 |
 | LeadWriter | `WriterAgent` | 已有简化版 |
 | CriticMaster | `CriticAgent` | 已有简化版 |
@@ -43,8 +43,9 @@ V2 的核心研究行为。
 - 审核意见、质量评分和待补充搜索查询
 - 事件消息、日志、错误和任务状态
 
-当前 `iteration-03` 已经把假设证据、数据点和基础知识图谱接入 `FactExtractorAgent`；
-数据分析、图表和检查点仍在后续迭代逐步补齐，避免一次性复制原项目的大状态对象。
+当前 `iteration-04` 已经把假设证据、数据点和基础知识图谱接入 `FactExtractorAgent`，
+并由 `DataAnalystAgent` 生成洞察和 ECharts 配置，交给 Writer 和 Critic 使用。
+CodeWizard 的受限代码执行和检查点仍在后续迭代逐步补齐，避免一次性复制原项目的大状态对象。
 
 ## 3. 必须保留的审核路由
 
@@ -84,7 +85,7 @@ V2 的核心研究行为。
 | `iteration-01` | Mock 环境下跑通规划、搜索、事实、写作、审核和内部事件流 |
 | `iteration-02` | 对齐状态模型和事件协议，建立本契约对应的领域对象 |
 | `iteration-03` | 增加假设驱动研究、数据点和知识图谱基础 |
-| `iteration-04` | 实现 DataAnalyst，输出洞察和 ECharts 配置 |
+| `iteration-04` | 实现 DataAnalyst，输出洞察和 ECharts 配置，并接入报告与事件流 |
 | `iteration-05` | 实现 CodeWizard，完成受限代码执行和图表记录 |
 | `iteration-06` | 完善章节写作、引用和结构化审核反馈 |
 | `iteration-07` | 增加 FastAPI SSE 单一研究接口 |

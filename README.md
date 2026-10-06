@@ -7,7 +7,7 @@
 逐步实现一个完整的 DeepResearch 后端链路：
 
 ```text
-用户问题 -> 研究规划 -> 信息搜索 -> 证据整理 -> 报告撰写 -> 质量审核
+用户问题 -> 研究规划 -> 信息搜索 -> 证据整理 -> 数据分析 -> 报告撰写 -> 质量审核
 ```
 
 第一阶段只关注代码结构和数据流，不加入数据库、Docker、登录和复杂前端。
@@ -17,7 +17,8 @@
 - iteration-01：建立研究状态、规划、搜索、写作和审核的最小链路。
 - iteration-02：对齐 V2 领域字段；来源、事实和章节草稿可以按章节追踪，并固定进度事件协议。
 - iteration-03：完成假设证据关联、结构化数据点和基础知识图谱。
-- 后续迭代：加入数据分析、图表、检查点、本地知识库和简化前端。
+- iteration-04：加入 DataAnalyst，从数据点生成洞察和 ECharts 配置，并接入报告和事件流。
+- 后续迭代：加入 CodeWizard、安全代码执行、检查点、本地知识库和简化前端。
 
 ## 学习方式
 
@@ -30,6 +31,7 @@
   -> Planner 生成章节大纲
   -> Researcher 按章节查询搜索来源
   -> FactExtractor 整理带章节关联的事实、假设证据、数据点和知识图谱
+  -> DataAnalyst 生成数据洞察和 ECharts 配置
   -> Writer 逐章生成草稿，再整合报告
   -> Critic 审核并决定通过、补充搜索或修订
   -> 返回最终报告、评分和引用
@@ -44,9 +46,10 @@
 不依赖 Web 框架。当前可以在 Python 内部验证事件顺序；FastAPI 和 SSE 会在之后的步骤加入。
 
 事件类型包括 `research_started`、`phase_started`、`outline_ready`、
-`research_evidence_ready`、`draft_ready`、`review_completed` 和 `research_completed`。
+`research_evidence_ready`、`analysis_ready`、`draft_ready`、`review_completed` 和 `research_completed`。
 `draft_ready` 事件还包含 `outline` 和 `draft_sections`，可以按章节读取中间结果。
-最终的 `research_completed` 事件包含报告、审核结果、质量评分和引用。
+`analysis_ready` 事件包含洞察、数据点和 ECharts 配置；最终的 `research_completed`
+事件包含报告、审核结果、质量评分、引用和分析结果。
 所有事件都有 `type`、`session_id`、`phase` 和 `iteration`；每种事件的必需业务字段
 见 `backend/app/domain/events.py` 中的 `EVENT_REQUIRED_FIELDS`。
 
