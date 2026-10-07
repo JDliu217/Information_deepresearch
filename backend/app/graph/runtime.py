@@ -55,7 +55,7 @@ class ResearchGraphRuntime:
                 if self._should_cancel(latest_state):
                     self._mark_cancelled(latest_state)
                     return latest_state
-                self._update_run_status(latest_state)
+                self._update_run_status(latest_state, node_update.get("events", []))
             self._mark_completed(latest_state)
             return latest_state
         except Exception as exc:
@@ -81,7 +81,7 @@ class ResearchGraphRuntime:
                 if self._should_cancel(state):
                     self._mark_cancelled(state)
                     return
-                self._update_run_status(state)
+                self._update_run_status(state, node_update.get("events", []))
             self._mark_completed(state)
         except Exception as exc:
             self._mark_failed(state, exc)
@@ -161,11 +161,16 @@ class ResearchGraphRuntime:
             and self.run_control.is_cancel_requested(state.session_id)
         )
 
-    def _update_run_status(self, state: ResearchState) -> None:
+    def _update_run_status(self, state: ResearchState, events: Any = None) -> None:
         if self.run_control is not None:
+            phase = state.phase
+            if isinstance(events, list):
+                for event in events:
+                    if isinstance(event, dict) and event.get("phase"):
+                        phase = str(event["phase"])
             self.run_control.update(
                 state.session_id,
-                phase=state.phase,
+                phase=phase,
                 iteration=state.iteration,
             )
 

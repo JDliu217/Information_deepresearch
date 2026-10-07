@@ -138,8 +138,10 @@ class InMemoryRunControlStore:
         )
 
     def request_cancel(self, session_id: str) -> RunStatus:
-        self._cancelled.add(session_id)
         current = self.get(session_id) or RunStatus(session_id=session_id)
+        if current.status in {COMPLETED, FAILED, CANCELLED}:
+            return current
+        self._cancelled.add(session_id)
         return self._save(replace(current, status=CANCEL_REQUESTED, updated_at=_timestamp()))
 
     def is_cancel_requested(self, session_id: str) -> bool:
@@ -210,8 +212,10 @@ class RedisRunControlStore:
         )
 
     def request_cancel(self, session_id: str) -> RunStatus:
-        self._set(self._cancel_key(session_id), "1")
         current = self.get(session_id) or RunStatus(session_id=session_id)
+        if current.status in {COMPLETED, FAILED, CANCELLED}:
+            return current
+        self._set(self._cancel_key(session_id), "1")
         return self._save(replace(current, status=CANCEL_REQUESTED, updated_at=_timestamp()))
 
     def is_cancel_requested(self, session_id: str) -> bool:

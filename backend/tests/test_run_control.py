@@ -56,8 +56,9 @@ class RunControlTests(unittest.TestCase):
         client = FakeRedis()
         store = RedisRunControlStore(client=client, ttl_seconds=60)
 
-        completed = store.mark_completed("session-3", phase="completed", iteration=2)
-        self.assertEqual(store.get("session-3"), completed)
+        store.start("session-3")
+        updated = store.update("session-3", phase="researching", iteration=2)
+        self.assertEqual(store.get("session-3"), updated)
         self.assertEqual(client.expirations["information_deepresearch:run:session-3:status"], 60)
 
         requested = store.request_cancel("session-3")
@@ -67,6 +68,15 @@ class RunControlTests(unittest.TestCase):
         store.mark_completed("session-3", phase="completed", iteration=2)
         self.assertFalse(store.is_cancel_requested("session-3"))
         self.assertEqual(store.get("session-3").status, COMPLETED)
+
+    def test_terminal_run_ignores_late_cancel_request(self):
+        store = InMemoryRunControlStore()
+        store.mark_completed("session-4", phase="completed", iteration=0)
+
+        status = store.request_cancel("session-4")
+
+        self.assertEqual(status.status, COMPLETED)
+        self.assertFalse(store.is_cancel_requested("session-4"))
 
 
 if __name__ == "__main__":
