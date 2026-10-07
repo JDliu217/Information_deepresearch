@@ -18,6 +18,7 @@ from app.agents.researcher import ResearcherAgent
 from app.agents.writer import WriterAgent
 from app.domain.events import ResearchEvent
 
+from .routes import prepare_review_route
 from .state import ResearchGraphState
 
 
@@ -163,6 +164,12 @@ class ResearchGraphNodes:
             )
         )
         return {"events": events}
+
+    @staticmethod
+    def route_review(graph_state: ResearchGraphState) -> dict[str, Any]:
+        """执行审核后的状态更新；具体条件边由 ``routes`` 负责读取。"""
+
+        return prepare_review_route(graph_state)
 
     @staticmethod
     def complete(graph_state: ResearchGraphState) -> dict[str, Any]:
