@@ -8,6 +8,8 @@ from dataclasses import dataclass
 from sqlalchemy import Engine, create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
+from app.core.env import load_project_env
+
 
 @dataclass(frozen=True)
 class DatabaseSettings:
@@ -18,6 +20,7 @@ class DatabaseSettings:
 
     @classmethod
     def from_env(cls) -> "DatabaseSettings":
+        load_project_env()
         return cls(
             url=os.getenv("DATABASE_URL", cls.url),
             echo=os.getenv("DATABASE_ECHO", "0").lower() in {"1", "true", "yes"},

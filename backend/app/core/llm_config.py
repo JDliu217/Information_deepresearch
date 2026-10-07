@@ -5,6 +5,8 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field
 
+from .env import load_project_env
+
 
 @dataclass(frozen=True)
 class AgentModelSettings:
@@ -30,6 +32,7 @@ class LLMSettings:
     def from_env(cls) -> "LLMSettings":
         """从环境变量构建配置，不打印或暴露密钥。"""
 
+        load_project_env()
         default_model = os.getenv("LLM_MODEL", "deepseek-v3.2")
         agents = {
             "planner": AgentModelSettings(

@@ -122,13 +122,15 @@ $env:PYTHONPATH = "backend"
 .venv\Scripts\python.exe -m unittest discover -s backend/tests -v
 ```
 
-真实服务配置示例见 `.env.example`。PowerShell 中可以直接设置环境变量：
+真实服务配置示例见 `.env.example`。复制为项目根目录的 `.env` 后填写密钥：
 
 ```powershell
-$env:LLM_API_KEY = "你的模型服务密钥"
-$env:LLM_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
-$env:BOCHA_API_KEY = "你的 Bocha 密钥"
+Copy-Item .env.example .env
+# 然后编辑 .env，填写 LLM_API_KEY 和 BOCHA_API_KEY
 ```
+
+项目启动时会自动加载根目录 `.env`。系统环境变量优先于 `.env`，`.env` 已被
+`.gitignore` 忽略，因此不要把真实密钥写入 `.env.example` 或提交到 Git。
 
 配置后使用 `--real` 运行命令行研究；不配置密钥时仍使用 Mock：
 

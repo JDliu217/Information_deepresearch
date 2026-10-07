@@ -7,6 +7,7 @@ import os
 from dataclasses import dataclass
 from typing import Any
 
+from .env import load_project_env
 from .search_client import SearchClient, SearchResult
 from .web_fetcher import WebPageFetcher, WebFetchSettings
 
@@ -24,6 +25,7 @@ class BochaSettings:
 
     @classmethod
     def from_env(cls) -> "BochaSettings":
+        load_project_env()
         return cls(
             api_key=os.getenv("BOCHA_API_KEY", ""),
             endpoint=os.getenv("BOCHA_ENDPOINT", cls.endpoint),

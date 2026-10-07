@@ -11,6 +11,7 @@ from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
 from app.graph.runtime import ResearchGraphRuntime, create_research_runtime
 from app.persistence.repository import ResearchRepository
 
+from .env import load_project_env
 from .llm_client import MockLLMClient
 from .llm_config import LLMSettings
 from .openai_llm_client import OpenAICompatibleLLMClient
@@ -31,6 +32,7 @@ def create_configured_llm(*, force_real: bool = False):
 def create_configured_search(*, force_real: bool = False) -> SearchClient:
     """有 Bocha Key 时创建真实搜索客户端，否则回退到 Mock。"""
 
+    load_project_env()
     has_key = bool(os.getenv("BOCHA_API_KEY", "").strip())
     if force_real or has_key:
         from .bocha_search import BochaSearchClient
