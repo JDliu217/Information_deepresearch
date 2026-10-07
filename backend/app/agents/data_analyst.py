@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from app.core.llm_client import LLMClient
-from app.domain.models import Chart
+from app.domain.models import Chart, DataPoint
 from app.domain.state import ResearchState
 
 from .base import BaseAgent
@@ -41,26 +41,185 @@ class DataAnalystAgent(BaseAgent):
         if not state.facts:
             raise ValueError("没有可供数据分析的事实")
 
-        payload = {
+        extraction_payload = {
+            "mode": "data_extraction",
             "query": state.query,
-            "facts": state.facts,
-            "data_points": state.data_points,
-            "knowledge_graph": state.knowledge_graph,
-            "instruction": (
-                "根据已有事实和数据点提炼可验证的洞察；如果有足够数据，"
-                "生成一个或多个可直接交给 ECharts 的配置。不要编造来源中不存在的数据。"
-            ),
+            "facts": self._fact_summaries(state.facts[:20]),
+            "data_points": state.data_points[:20],
+            "instruction": "从前 20 条事实摘要提取结构化数据、时间序列、分布和有证据边界的洞察。",
         }
-        result = await self._complete_json(
-            payload,
+        extracted = await self._complete_json(
+            extraction_payload,
             system_prompt=self.DATA_EXTRACTION_SYSTEM,
-            user_prompt=self._render_prompt(self.DATA_EXTRACTION_PROMPT, payload),
+            user_prompt=self._render_prompt(self.DATA_EXTRACTION_PROMPT, extraction_payload),
         )
-        insights, charts = self._validate_result(result)
-        state.insights = self._merge_insights(state.insights, insights)
-        self._upsert_charts(state.charts, charts)
+
+        extracted_data = self._validate_data_extraction(extracted)
+        self._append_structured_data_points(state.data_points, extracted_data["data_points"])
+        state.insights = self._merge_insights(
+            state.insights,
+            [*extracted_data["insights"], *extracted_data["time_series_insights"]],
+        )
+
+        graph_payload = {
+            "mode": "knowledge_graph",
+            "query": state.query,
+            "facts": self._fact_summaries(state.facts[:15]),
+            "knowledge_graph": state.knowledge_graph,
+        }
+        graph_result = await self._complete_json(
+            graph_payload,
+            system_prompt=self.DATA_EXTRACTION_SYSTEM,
+            user_prompt=self._render_prompt(self.KNOWLEDGE_GRAPH_PROMPT, graph_payload),
+        )
+        self._merge_knowledge_graph(state.knowledge_graph, graph_result)
+
+        chart_candidates = (
+            extracted_data["data_points"]
+            or extracted_data["time_series"]
+            or extracted_data["distributions"]
+            or state.data_points[:10]
+        )
+        if chart_candidates:
+            chart_payload = {
+                "mode": "chart_generation",
+                "query": state.query,
+                "data": {
+                    "data_points": extracted_data["data_points"],
+                    "time_series": extracted_data["time_series"],
+                    "distributions": extracted_data["distributions"],
+                    "existing_data_points": state.data_points[:10],
+                },
+            }
+            chart_result = await self._complete_json(
+                chart_payload,
+                system_prompt=self.DATA_EXTRACTION_SYSTEM,
+                user_prompt=self._render_prompt(self.CHART_GENERATION_PROMPT, chart_payload),
+            )
+            _, charts = self._validate_result(chart_result)
+            self._upsert_charts(state.charts, charts)
         state.phase = "analyzing"
         return state
+
+    @staticmethod
+    def _fact_summaries(facts: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        return [
+            {
+                "id": fact.get("id", ""),
+                "content": str(fact.get("content", "")).strip()[:500],
+                "source_title": fact.get("source_title", ""),
+                "source_url": fact.get("source_url", ""),
+                "data_points": fact.get("data_points", []),
+            }
+            for fact in facts
+        ]
+
+    @classmethod
+    def _validate_data_extraction(cls, value: Any) -> dict[str, Any]:
+        if not isinstance(value, dict):
+            raise ValueError("DataAnalyst 数据提取结果必须是对象")
+
+        def list_of_dicts(field: str) -> list[dict[str, Any]]:
+            raw = value.get(field, []) or []
+            if not isinstance(raw, list) or not all(isinstance(item, dict) for item in raw):
+                raise ValueError(f"DataAnalyst 的 {field} 必须是对象列表")
+            return raw
+
+        raw_insights = value.get("insights", []) or []
+        if not isinstance(raw_insights, list) or not all(
+            isinstance(item, str) and item.strip() for item in raw_insights
+        ):
+            raise ValueError("DataAnalyst 数据提取的 insights 必须是字符串列表")
+        return {
+            "data_points": list_of_dicts("data_points"),
+            "time_series": list_of_dicts("time_series"),
+            "distributions": list_of_dicts("distributions"),
+            "insights": [item.strip() for item in raw_insights],
+            "time_series_insights": [],
+        }
+
+    @staticmethod
+    def _append_structured_data_points(
+        target: list[dict[str, Any]],
+        values: list[dict[str, Any]],
+    ) -> None:
+        seen = {
+            (
+                str(item.get("name", "")).strip(),
+                str(item.get("value", "")).strip(),
+                str(item.get("unit", "")).strip(),
+                str(item.get("year", "")).strip(),
+                str(item.get("source", "")).strip(),
+            )
+            for item in target
+        }
+        for index, item in enumerate(values, start=1):
+            name = str(item.get("name", "")).strip()
+            if not name or item.get("value") is None:
+                continue
+            normalized = {
+                "id": str(item.get("id", "")).strip() or f"dp_{len(target) + 1}",
+                "name": name,
+                "value": item.get("value"),
+                "unit": str(item.get("unit", "")).strip(),
+                "year": item.get("year"),
+                "source": str(item.get("source", "")).strip(),
+                "confidence": float(item.get("confidence", 0.0) or 0.0),
+            }
+            key = (
+                normalized["name"],
+                str(normalized["value"]).strip(),
+                normalized["unit"],
+                str(normalized["year"] or "").strip(),
+                normalized["source"],
+            )
+            if key not in seen:
+                target.append(DataPoint(**normalized).to_dict())
+                seen.add(key)
+
+    @staticmethod
+    def _merge_knowledge_graph(target: dict[str, Any], value: Any) -> None:
+        if not isinstance(value, dict):
+            raise ValueError("DataAnalyst 知识图谱结果必须是对象")
+        nodes = value.get("nodes", []) or []
+        edges = value.get("edges", []) or []
+        if not isinstance(nodes, list) or not isinstance(edges, list):
+            raise ValueError("DataAnalyst 知识图谱 nodes 和 edges 必须是列表")
+        target_nodes = target.setdefault("nodes", [])
+        target_edges = target.setdefault("edges", [])
+        node_keys = {
+            str(node.get("name", node.get("id", ""))).strip()
+            for node in target_nodes
+            if isinstance(node, dict)
+        }
+        for node in nodes:
+            if not isinstance(node, dict):
+                raise ValueError("DataAnalyst 知识图谱节点必须是对象")
+            name = str(node.get("name", node.get("id", ""))).strip()
+            if not name or name in node_keys:
+                continue
+            target_nodes.append(node)
+            node_keys.add(name)
+        edge_keys = {
+            (
+                str(edge.get("source", "")).strip(),
+                str(edge.get("target", "")).strip(),
+                str(edge.get("relation", "")).strip(),
+            )
+            for edge in target_edges
+            if isinstance(edge, dict)
+        }
+        for edge in edges:
+            if not isinstance(edge, dict):
+                raise ValueError("DataAnalyst 知识图谱边必须是对象")
+            key = (
+                str(edge.get("source", "")).strip(),
+                str(edge.get("target", "")).strip(),
+                str(edge.get("relation", "")).strip(),
+            )
+            if key not in edge_keys:
+                target_edges.append(edge)
+                edge_keys.add(key)
 
     @classmethod
     def _validate_result(

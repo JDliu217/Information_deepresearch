@@ -147,6 +147,8 @@ class MockLLMClient(LLMClient):
 
         if role == "data_analyst":
             data_points = payload.get("data_points", [])
+            if not data_points and isinstance(payload.get("data"), dict):
+                data_points = payload["data"].get("existing_data_points", [])
             if not data_points:
                 return {"insights": [], "charts": []}
 

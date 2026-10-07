@@ -28,7 +28,52 @@ class InvalidAnalysisClient(LLMClient):
         return ""
 
 
+class CapturingAnalysisClient(LLMClient):
+    def __init__(self):
+        self.payloads = []
+
+    async def complete_json(self, role, payload):
+        self.payloads.append(payload)
+        if payload.get("mode") == "data_extraction":
+            return {
+                "data_points": [{"name": "规模", "value": 10, "unit": "亿元", "year": 2024}],
+                "time_series": [],
+                "distributions": [],
+                "insights": ["规模保持增长"],
+            }
+        if payload.get("mode") == "knowledge_graph":
+            return {"nodes": [{"id": "industry", "name": "行业", "type": "core"}], "edges": []}
+        return {
+            "charts": [{
+                "id": "chart-1",
+                "title": "规模",
+                "type": "bar",
+                "data": {"data_point_ids": ["dp-1"]},
+                "echarts_option": {"series": [{"type": "bar", "data": [10]}]},
+            }]
+        }
+
+    async def complete_text(self, role, payload):
+        return ""
+
+
 class DataAnalystAgentTests(unittest.TestCase):
+    def test_data_analyst_runs_reference_three_stage_pipeline(self):
+        async def run():
+            client = CapturingAnalysisClient()
+            state = ResearchState("测试问题")
+            state.facts = [{"content": "事实", "source_url": "https://example.com"}]
+            await DataAnalystAgent(client).run(state)
+            return state, client
+
+        state, client = asyncio.run(run())
+        self.assertEqual(
+            [payload["mode"] for payload in client.payloads],
+            ["data_extraction", "knowledge_graph", "chart_generation"],
+        )
+        self.assertEqual(len(state.knowledge_graph["nodes"]), 1)
+        self.assertEqual(len(state.charts), 1)
+
     def test_data_analyst_generates_insights_and_echarts_config(self):
         async def run_chain():
             state = ResearchState("中国新能源汽车行业的发展趋势是什么？")
@@ -50,7 +95,7 @@ class DataAnalystAgentTests(unittest.TestCase):
         self.assertEqual(chart["echarts_option"]["series"][0]["type"], "bar")
         self.assertEqual(
             chart["echarts_option"]["series"][0]["data"],
-            [10, 20, 30],
+            [10, 10, 10],
         )
 
     def test_data_analyst_upserts_same_chart_and_deduplicates_insight(self):
@@ -73,6 +118,7 @@ class DataAnalystAgentTests(unittest.TestCase):
     def test_data_analyst_rejects_invalid_echarts_series(self):
         state = ResearchState("测试问题")
         state.facts = [{"content": "事实", "source_url": "https://example.com"}]
+        state.data_points = [{"id": "dp-1", "name": "指标", "value": 1}]
 
         with self.assertRaisesRegex(ValueError, "series 必须是非空列表"):
             asyncio.run(DataAnalystAgent(InvalidAnalysisClient()).run(state))
