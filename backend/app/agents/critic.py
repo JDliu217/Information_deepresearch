@@ -29,7 +29,18 @@ class CriticAgent(BaseAgent):
 
 缺来源、内容不完整、来源过时或核心事实无法核验时，应在 issue 中设置 requires_new_search=true 并给出
 search_query；仅措辞、逻辑组织或轻微偏差可直接修订。"""
-    FINAL_CHECK_PROMPT = """请对审核后修订的报告做最终检查，只报告仍未解决的来源、事实、逻辑或完整性问题。"""
+    FINAL_CHECK_PROMPT = """请对审核后修订的报告做最终检查，判断以前的问题是否解决以及是否出现新问题。
+返回 JSON：
+{
+  "resolved_issues": ["已解决的问题 ID"],
+  "unresolved_issues": ["未解决的问题 ID"],
+  "new_issues": [{"description":"新问题", "severity":"critical|major|minor"}],
+  "final_verdict": "approved|needs_more_work",
+  "final_score": 1,
+  "publication_readiness": "ready|almost_ready|not_ready",
+  "final_comments": "最终评语"
+}
+只报告仍未解决的来源、事实、逻辑或完整性问题。"""
 
     def __init__(self, llm: LLMClient):
         self.llm = llm
@@ -65,6 +76,33 @@ search_query；仅措辞、逻辑组织或轻微偏差可直接修订。"""
         state.quality_score = review["quality_score"]
         state.phase = "reviewing"
         return state
+
+    async def final_check(self, state: ResearchState) -> dict[str, Any]:
+        """对 Writer 修订后的报告做一次轻量最终检查。
+
+        这是参考 CriticMaster 的最终检查能力，结果不直接改变工作流，
+        由调用节点决定是否记录或继续结束。
+        """
+
+        payload = {
+            "query": state.query,
+            "previous_issues": [
+                {
+                    "id": issue.get("id", ""),
+                    "severity": issue.get("severity", ""),
+                    "description": issue.get("description", ""),
+                    "resolved": issue.get("resolved", False),
+                }
+                for issue in state.critic_feedback
+                if isinstance(issue, dict)
+            ],
+            "revised_content": state.final_report[:8000],
+        }
+        return await self._complete_json(
+            payload,
+            system_prompt=self.REVIEW_SYSTEM,
+            user_prompt=self._render_prompt(self.FINAL_CHECK_PROMPT, payload),
+        )
 
     @staticmethod
     def route_review(review: dict[str, Any]) -> dict[str, Any]:
@@ -104,7 +142,8 @@ search_query；仅措辞、逻辑组织或轻微偏差可直接修订。"""
 
     @staticmethod
     def _build_review_context(state: ResearchState) -> dict[str, Any]:
-        """按章节整理审核输入，避免 Critic 只看到一整段报告。"""
+        """按参考工程的摘要规则整理审核输入。"""
+
         sections = []
         for index, raw_section in enumerate(state.outline, start=1):
             section_id = str(raw_section.get("id", f"sec_{index}")).strip() or f"sec_{index}"
@@ -112,30 +151,41 @@ search_query；仅措辞、逻辑组织或轻微偏差可直接修订。"""
                 {
                     "id": section_id,
                     "title": str(raw_section.get("title", f"第 {index} 节")).strip(),
-                    "draft": state.draft_sections.get(section_id, ""),
-                    "facts": [
-                        fact
-                        for fact in state.facts
-                        if str(fact.get("section_id", "")).strip() == section_id
-                    ],
-                    "source_urls": [
-                        str(fact.get("source_url", "")).strip()
-                        for fact in state.facts
-                        if str(fact.get("section_id", "")).strip() == section_id
-                        and str(fact.get("source_url", "")).strip()
-                    ],
+                    "status": str(raw_section.get("status", "pending")).strip(),
                 }
             )
+
+        facts = [
+            {
+                "id": fact.get("id") or f"fact_{index}",
+                "content": str(fact.get("content", "")).strip()[:150],
+                "source_name": fact.get("source_name") or fact.get("source_title", ""),
+                "source_url": fact.get("source_url", ""),
+                "credibility_score": fact.get(
+                    "credibility_score", fact.get("confidence", 0.0)
+                ),
+            }
+            for index, fact in enumerate(state.facts[:20], start=1)
+        ]
+        sources = [
+            {
+                "title": source.get("title", ""),
+                "url": source.get("url", ""),
+                "source": source.get("source", ""),
+                "date": source.get("date", ""),
+            }
+            for source in state.raw_sources[:30]
+        ]
         return {
-            "outline": state.outline,
+            "outline": sections,
             "sections": sections,
-            "report": state.final_report,
-            "facts": state.facts,
-            "sources": state.raw_sources,
-            "data_points": state.data_points,
-            "insights": state.insights,
-            "charts": state.charts,
-            "code_executions": state.code_executions,
+            "report": state.final_report[:8000],
+            "facts": facts,
+            "sources": sources,
+            "data_points": state.data_points[:15],
+            "insights": state.insights[:10],
+            "charts": state.charts[:10],
+            "code_executions": state.code_executions[:10],
         }
 
     @staticmethod

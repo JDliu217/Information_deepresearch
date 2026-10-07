@@ -29,6 +29,37 @@ class LowScorePassClient(MockLLMClient):
 
 
 class CriticAgentTests(unittest.TestCase):
+    def test_critic_context_uses_reference_summary_limits(self):
+        class CapturingCriticClient(MockLLMClient):
+            def __init__(self):
+                self.payload = None
+
+            async def complete_json(self, role, payload, system_prompt="", user_prompt=""):
+                self.payload = payload
+                return await super().complete_json(role, payload, system_prompt, user_prompt)
+
+        async def run():
+            client = CapturingCriticClient()
+            state = ResearchState("测试问题")
+            state.final_report = "报告" * 5000
+            state.outline = [{"id": "sec-1", "title": "章节", "status": "drafted"}]
+            state.draft_sections = {"sec-1": "草稿" * 5000}
+            state.facts = [
+                {"id": f"fact-{i}", "content": "事实" * 200, "source_title": "来源", "confidence": 0.8}
+                for i in range(25)
+            ]
+            state.data_points = [{"id": f"dp-{i}", "name": "指标", "value": i} for i in range(20)]
+            state.raw_sources = [{"title": "来源", "url": f"https://example.com/{i}"} for i in range(40)]
+            await CriticAgent(client).run(state)
+            return client
+
+        client = asyncio.run(run())
+        self.assertLessEqual(len(client.payload["report"]), 8000)
+        self.assertEqual(len(client.payload["facts"]), 20)
+        self.assertTrue(all(len(fact["content"]) <= 150 for fact in client.payload["facts"]))
+        self.assertEqual(len(client.payload["data_points"]), 15)
+        self.assertEqual(set(client.payload["outline"][0]), {"id", "title", "status"})
+
     def test_critic_approves_source_grounded_report(self):
         async def run_chain():
             state = ResearchState("中国新能源汽车行业的发展趋势是什么？")
