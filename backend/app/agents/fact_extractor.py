@@ -15,7 +15,8 @@ class FactExtractorAgent(BaseAgent):
     """把网页来源转换成报告可以引用的事实。"""
 
     name = "fact_extractor"
-    default_max_source_chars = 8_000
+    # 原项目的常规搜索分析只发送每条摘要的前 300 字。
+    default_max_source_chars = 300
     default_max_total_source_chars = 60_000
 
     def __init__(
@@ -25,8 +26,8 @@ class FactExtractorAgent(BaseAgent):
         max_source_chars: int = default_max_source_chars,
         max_total_source_chars: int = default_max_total_source_chars,
     ):
-        if max_source_chars < 500:
-            raise ValueError("max_source_chars 不能小于 500")
+        if max_source_chars < 100:
+            raise ValueError("max_source_chars 不能小于 100")
         if max_total_source_chars < max_source_chars:
             raise ValueError("max_total_source_chars 不能小于 max_source_chars")
         self.llm = llm

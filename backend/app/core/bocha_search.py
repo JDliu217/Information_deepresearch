@@ -19,7 +19,7 @@ class BochaSettings:
     timeout_seconds: float = 30.0
     max_retries: int = 2
     freshness: str = "noLimit"
-    fetch_content: bool = True
+    fetch_content: bool = False
     max_content_chars: int = 20_000
     max_fetch_concurrency: int = 4
 
@@ -32,7 +32,7 @@ class BochaSettings:
             timeout_seconds=float(os.getenv("BOCHA_TIMEOUT_SECONDS", "30")),
             max_retries=int(os.getenv("BOCHA_MAX_RETRIES", "2")),
             freshness=os.getenv("BOCHA_FRESHNESS", "noLimit"),
-            fetch_content=os.getenv("BOCHA_FETCH_CONTENT", "1").lower()
+            fetch_content=os.getenv("BOCHA_FETCH_CONTENT", "0").lower()
             in {"1", "true", "yes"},
             max_content_chars=int(os.getenv("BOCHA_MAX_CONTENT_CHARS", "20000")),
             max_fetch_concurrency=int(os.getenv("BOCHA_FETCH_CONCURRENCY", "4")),

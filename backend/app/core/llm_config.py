@@ -43,7 +43,7 @@ class LLMSettings:
             "fact_extractor": AgentModelSettings(
                 model=os.getenv("LLM_FACT_MODEL", default_model),
                 temperature=0.15,
-                max_tokens=9000,
+                max_tokens=16000,
             ),
             "data_analyst": AgentModelSettings(
                 model=os.getenv("LLM_ANALYST_MODEL", default_model),

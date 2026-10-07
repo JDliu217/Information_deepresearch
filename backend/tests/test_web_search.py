@@ -106,6 +106,9 @@ class WebSearchTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             BochaSearchClient(BochaSettings(api_key=""))
 
+    def test_bocha_does_not_fetch_full_pages_by_default(self):
+        self.assertFalse(BochaSettings(api_key="test-key").fetch_content)
+
 
 if __name__ == "__main__":
     unittest.main()
