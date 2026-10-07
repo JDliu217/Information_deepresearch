@@ -124,4 +124,4 @@ class ResearchWorkflow:
     def _graph_config(self) -> dict[str, int]:
         """允许每次审核修订循环完成，同时仍限制意外的无限循环。"""
 
-        return {"recursion_limit": max(25, 12 + 8 * self.max_iterations)}
+        return {"recursion_limit": max(30, 20 + 12 * self.max_iterations)}

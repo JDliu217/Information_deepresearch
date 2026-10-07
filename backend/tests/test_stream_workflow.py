@@ -27,6 +27,18 @@ class SequencedReviewLLM(MockLLMClient):
         return await super().complete_json(role, payload)
 
 
+class PausedPlannerLLM(MockLLMClient):
+    def __init__(self):
+        self.planner_started = asyncio.Event()
+        self.release_planner = asyncio.Event()
+
+    async def complete_json(self, role, payload):
+        if role == "planner":
+            self.planner_started.set()
+            await self.release_planner.wait()
+        return await super().complete_json(role, payload)
+
+
 async def collect_events(workflow, query, session_id=None):
     return [
         event
@@ -35,6 +47,30 @@ async def collect_events(workflow, query, session_id=None):
 
 
 class StreamWorkflowTests(unittest.TestCase):
+    def test_phase_started_is_streamed_before_planner_finishes(self):
+        llm = PausedPlannerLLM()
+        workflow = ResearchWorkflow(llm, MockSearchClient())
+
+        async def inspect_stream():
+            stream = workflow.stream("测试问题")
+            first = await anext(stream)
+            second = await anext(stream)
+            pending_outline = asyncio.create_task(anext(stream))
+            await llm.planner_started.wait()
+
+            self.assertEqual(first["type"], "research_started")
+            self.assertEqual(second["type"], "phase_started")
+            self.assertEqual(second["phase"], "planning")
+            self.assertFalse(pending_outline.done())
+
+            llm.release_planner.set()
+            outline = await pending_outline
+            remaining = [event async for event in stream]
+            self.assertEqual(outline["type"], "outline_ready")
+            self.assertEqual(remaining[-1]["type"], "research_completed")
+
+        asyncio.run(inspect_stream())
+
     def test_stream_emits_ordered_events_and_final_result(self):
         workflow = ResearchWorkflow(MockLLMClient(), MockSearchClient())
 

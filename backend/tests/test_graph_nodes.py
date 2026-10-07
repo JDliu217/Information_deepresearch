@@ -40,16 +40,16 @@ class GraphNodeTests(unittest.TestCase):
     def test_plan_node_updates_domain_state_and_emits_events(self):
         state = ResearchState("测试问题")
 
-        result = asyncio.run(self.nodes.plan(initial_graph_state(state)))
+        graph_state = initial_graph_state(state)
+        started = self.nodes.planning_started(graph_state)
+        result = asyncio.run(self.nodes.plan(graph_state))
 
         self.assertFalse(state.outline)
         self.assertTrue(result["research_state"].outline)
         self.assertIsNot(result["research_state"], state)
-        self.assertEqual([event["type"] for event in result["events"]], [
-            "phase_started",
-            "outline_ready",
-        ])
-        self.assertEqual(result["events"][0]["phase"], "planning")
+        self.assertEqual(started["events"][0]["type"], "phase_started")
+        self.assertEqual(started["events"][0]["phase"], "planning")
+        self.assertEqual(result["events"][0]["type"], "outline_ready")
 
 
 if __name__ == "__main__":

@@ -52,39 +52,50 @@ class ResearchGraphNodes:
             ]
         }
 
+    def planning_started(self, graph_state: ResearchGraphState) -> dict[str, Any]:
+        state = graph_state["research_state"]
+        return {
+            "events": [
+                self._event(state, "phase_started", phase="planning", agent=self.planner.name)
+            ]
+        }
+
     async def plan(self, graph_state: ResearchGraphState) -> dict[str, Any]:
         state = deepcopy(graph_state["research_state"])
-        events = [self._event(state, "phase_started", phase="planning", agent=self.planner.name)]
         await self.planner.run(state)
-        events.append(
-            self._event(
-                state,
-                "outline_ready",
-                outline=state.outline,
-                research_questions=state.research_questions,
-                hypotheses=state.hypotheses,
-                key_entities=state.key_entities,
-                mind_map=state.mind_map,
-            )
-        )
-        return {"research_state": state, "events": events}
-
-    async def research(self, graph_state: ResearchGraphState) -> dict[str, Any]:
-        state = deepcopy(graph_state["research_state"])
-        supplementary = bool(graph_state.get("supplementary", False))
-        await self.researcher.run(state)
         return {
             "research_state": state,
+            "events": [
+                self._event(
+                    state,
+                    "outline_ready",
+                    outline=state.outline,
+                    research_questions=state.research_questions,
+                    hypotheses=state.hypotheses,
+                    key_entities=state.key_entities,
+                    mind_map=state.mind_map,
+                )
+            ],
+        }
+
+    def research_started(self, graph_state: ResearchGraphState) -> dict[str, Any]:
+        state = graph_state["research_state"]
+        return {
             "events": [
                 self._event(
                     state,
                     "phase_started",
                     phase="researching",
                     agent=self.researcher.name,
-                    supplementary=supplementary,
+                    supplementary=bool(graph_state.get("supplementary", False)),
                 )
-            ],
+            ]
         }
+
+    async def research(self, graph_state: ResearchGraphState) -> dict[str, Any]:
+        state = deepcopy(graph_state["research_state"])
+        await self.researcher.run(state)
+        return {"research_state": state}
 
     async def extract_facts(self, graph_state: ResearchGraphState) -> dict[str, Any]:
         state = deepcopy(graph_state["research_state"])
@@ -106,19 +117,23 @@ class ResearchGraphNodes:
             ]
         }
 
+    def analysis_started(self, graph_state: ResearchGraphState) -> dict[str, Any]:
+        state = graph_state["research_state"]
+        return {
+            "events": [
+                self._event(
+                    state,
+                    "phase_started",
+                    phase="analyzing",
+                    agent=self.data_analyst.name,
+                )
+            ]
+        }
+
     async def analyze(self, graph_state: ResearchGraphState) -> dict[str, Any]:
         state = deepcopy(graph_state["research_state"])
-        event = self._event(
-            state,
-            "phase_started",
-            phase="analyzing",
-            agent=self.data_analyst.name,
-        )
         await self.data_analyst.run(state)
-        return {
-            "research_state": state,
-            "events": [event],
-        }
+        return {"research_state": state}
 
     async def execute_analysis(self, graph_state: ResearchGraphState) -> dict[str, Any]:
         state = deepcopy(graph_state["research_state"])
@@ -140,51 +155,65 @@ class ResearchGraphNodes:
             ]
         }
 
+    def writing_started(self, graph_state: ResearchGraphState) -> dict[str, Any]:
+        state = graph_state["research_state"]
+        return {
+            "events": [
+                self._event(
+                    state,
+                    "phase_started",
+                    phase="writing",
+                    agent=self.writer.name,
+                    revision=bool(graph_state.get("revision", False)),
+                )
+            ]
+        }
+
     async def write(self, graph_state: ResearchGraphState) -> dict[str, Any]:
         state = deepcopy(graph_state["research_state"])
         revision = bool(graph_state.get("revision", False))
-        events = [
-            self._event(
-                state,
-                "phase_started",
-                phase="writing",
-                agent=self.writer.name,
-                revision=revision,
-            )
-        ]
         await self.writer.run(state)
-        events.append(
-            self._event(
-                state,
-                "draft_ready",
-                report=state.final_report,
-                outline=state.outline,
-                draft_sections=state.draft_sections,
-                revision=revision,
-            )
-        )
-        return {"research_state": state, "events": events}
+        return {
+            "research_state": state,
+            "events": [
+                self._event(
+                    state,
+                    "draft_ready",
+                    report=state.final_report,
+                    outline=state.outline,
+                    draft_sections=state.draft_sections,
+                    revision=revision,
+                )
+            ],
+        }
+
+    def reviewing_started(self, graph_state: ResearchGraphState) -> dict[str, Any]:
+        state = graph_state["research_state"]
+        return {
+            "events": [
+                self._event(state, "phase_started", phase="reviewing", agent=self.critic.name)
+            ]
+        }
 
     async def review(self, graph_state: ResearchGraphState) -> dict[str, Any]:
         state = deepcopy(graph_state["research_state"])
-        events = [
-            self._event(state, "phase_started", phase="reviewing", agent=self.critic.name)
-        ]
         await self.critic.run(state)
-        events.append(
-            self._event(
-                state,
-                "review_completed",
-                review_result=state.review_result,
-                critic_feedback=state.critic_feedback,
-                quality_score=state.quality_score,
-                unresolved_issues=state.unresolved_issues,
-                fact_check_results=state.review_result.get("fact_check_results", []),
-                missing_aspects=state.review_result.get("missing_aspects", []),
-                strengths=state.review_result.get("strengths", []),
-            )
-        )
-        return {"research_state": state, "events": events}
+        return {
+            "research_state": state,
+            "events": [
+                self._event(
+                    state,
+                    "review_completed",
+                    review_result=state.review_result,
+                    critic_feedback=state.critic_feedback,
+                    quality_score=state.quality_score,
+                    unresolved_issues=state.unresolved_issues,
+                    fact_check_results=state.review_result.get("fact_check_results", []),
+                    missing_aspects=state.review_result.get("missing_aspects", []),
+                    strengths=state.review_result.get("strengths", []),
+                )
+            ],
+        }
 
     @staticmethod
     def route_review(graph_state: ResearchGraphState) -> dict[str, Any]:
