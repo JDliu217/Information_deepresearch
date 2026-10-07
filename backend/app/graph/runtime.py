@@ -20,6 +20,7 @@ from app.agents.planner import PlannerAgent
 from app.agents.researcher import ResearcherAgent
 from app.agents.writer import WriterAgent
 from app.core.llm_client import LLMClient
+from app.core.run_control import RunControlStore
 from app.core.search_client import SearchClient
 from app.domain.state import ResearchState
 from app.persistence.repository import ResearchRepository
@@ -36,6 +37,7 @@ class ResearchGraphRuntime:
     graph: Any
     max_iterations: int = 1
     repository: ResearchRepository | None = None
+    run_control: RunControlStore | None = None
 
     async def run(
         self,
@@ -43,12 +45,22 @@ class ResearchGraphRuntime:
         session_id: str | None = None,
     ) -> ResearchState:
         state = self._new_state(query, session_id)
+        self._start_run(state)
         if self.repository is not None:
             self.repository.save_state(state)
         latest_state = state
-        async for node_update in self._stream_updates(state):
-            latest_state = self._persist_update(node_update, latest_state)
-        return latest_state
+        try:
+            async for node_update in self._stream_updates(state):
+                latest_state = self._persist_update(node_update, latest_state)
+                if self._should_cancel(latest_state):
+                    self._mark_cancelled(latest_state)
+                    return latest_state
+                self._update_run_status(latest_state)
+            self._mark_completed(latest_state)
+            return latest_state
+        except Exception as exc:
+            self._mark_failed(latest_state, exc)
+            raise
 
     async def stream(
         self,
@@ -56,29 +68,63 @@ class ResearchGraphRuntime:
         session_id: str | None = None,
     ) -> AsyncIterator[dict[str, Any]]:
         state = self._new_state(query, session_id)
+        self._start_run(state)
         if self.repository is not None:
             self.repository.save_state(state)
-        async for node_update in self._stream_updates(state):
-            self._persist_update(node_update, state)
-            events = node_update.get("events", [])
-            if isinstance(events, list):
-                async for event in from_events(events):
-                    yield event
+        try:
+            async for node_update in self._stream_updates(state):
+                state = self._persist_update(node_update, state)
+                events = node_update.get("events", [])
+                if isinstance(events, list):
+                    async for event in from_events(events):
+                        yield event
+                if self._should_cancel(state):
+                    self._mark_cancelled(state)
+                    return
+                self._update_run_status(state)
+            self._mark_completed(state)
+        except Exception as exc:
+            self._mark_failed(state, exc)
+            raise
+
+    def request_cancel(self, session_id: str):
+        """设置取消标志；实际停止发生在下一个图节点边界。"""
+
+        if self.run_control is None:
+            raise RuntimeError("当前 runtime 没有配置运行控制存储")
+        return self.run_control.request_cancel(session_id)
+
+    def get_run_status(self, session_id: str):
+        """读取运行摘要，供后续 API 或 SSE 查询。"""
+
+        if self.run_control is None:
+            return None
+        return self.run_control.get(session_id)
 
     async def _stream_updates(
         self,
         state: ResearchState,
     ) -> AsyncIterator[dict[str, Any]]:
-        async for update in self.graph.astream(
+        graph_stream = self.graph.astream(
             initial_graph_state(state),
             config=self._graph_config(),
             stream_mode="updates",
-        ):
-            if not isinstance(update, dict):
-                continue
-            for node_update in update.values():
-                if isinstance(node_update, dict):
-                    yield node_update
+        )
+        try:
+            while True:
+                if self._should_cancel(state):
+                    return
+                try:
+                    update = await graph_stream.__anext__()
+                except StopAsyncIteration:
+                    return
+                if not isinstance(update, dict):
+                    continue
+                for node_update in update.values():
+                    if isinstance(node_update, dict):
+                        yield node_update
+        finally:
+            await graph_stream.aclose()
 
     def _persist_update(
         self,
@@ -104,6 +150,50 @@ class ResearchGraphRuntime:
             max_iterations=self.max_iterations,
         )
 
+    def _start_run(self, state: ResearchState) -> None:
+        if self.run_control is not None:
+            self.run_control.start(state.session_id)
+
+    def _should_cancel(self, state: ResearchState) -> bool:
+        return (
+            state.phase != "completed"
+            and self.run_control is not None
+            and self.run_control.is_cancel_requested(state.session_id)
+        )
+
+    def _update_run_status(self, state: ResearchState) -> None:
+        if self.run_control is not None:
+            self.run_control.update(
+                state.session_id,
+                phase=state.phase,
+                iteration=state.iteration,
+            )
+
+    def _mark_completed(self, state: ResearchState) -> None:
+        if self.run_control is not None:
+            self.run_control.mark_completed(
+                state.session_id,
+                phase=state.phase,
+                iteration=state.iteration,
+            )
+
+    def _mark_cancelled(self, state: ResearchState) -> None:
+        if self.run_control is not None:
+            self.run_control.mark_cancelled(
+                state.session_id,
+                phase=state.phase,
+                iteration=state.iteration,
+            )
+
+    def _mark_failed(self, state: ResearchState, error: Exception) -> None:
+        if self.run_control is not None:
+            self.run_control.mark_failed(
+                state.session_id,
+                phase=state.phase,
+                iteration=state.iteration,
+                error=str(error),
+            )
+
     def _graph_config(self) -> dict[str, int]:
         return {"recursion_limit": max(30, 20 + 12 * self.max_iterations)}
 
@@ -126,6 +216,7 @@ def create_research_runtime(
     results_per_question: int = 3,
     max_iterations: int = 1,
     repository: ResearchRepository | None = None,
+    run_control: RunControlStore | None = None,
 ) -> ResearchGraphRuntime:
     """创建唯一的 V2 LangGraph 运行实例。"""
 
@@ -144,4 +235,5 @@ def create_research_runtime(
         graph=build_research_graph(nodes),
         max_iterations=max_iterations,
         repository=repository,
+        run_control=run_control,
     )
