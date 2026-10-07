@@ -32,6 +32,18 @@ class FakeRuntime:
             "report": "测试报告",
         }
 
+    def can_resume(self, session_id: str) -> bool:
+        return session_id == "resume-session"
+
+    async def resume_stream(self, session_id: str) -> AsyncIterator[dict]:
+        yield {
+            "type": "research_completed",
+            "session_id": session_id,
+            "phase": "completed",
+            "iteration": 0,
+            "report": "恢复后的报告",
+        }
+
 
 class ApiAppTests(unittest.TestCase):
     def test_health_endpoint_returns_ok(self):
@@ -88,6 +100,22 @@ class ApiAppTests(unittest.TestCase):
         response = client.get("/api/research/session/events")
 
         self.assertEqual(response.status_code, 503)
+
+    def test_resume_endpoint_returns_sse_for_existing_checkpoint(self):
+        client = TestClient(create_app(runtime=FakeRuntime()))
+
+        response = client.post("/api/research/resume-session/resume")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("event: research_completed\n", response.text)
+        self.assertIn("恢复后的报告", response.text)
+
+    def test_resume_endpoint_returns_not_found_without_checkpoint(self):
+        client = TestClient(create_app(runtime=FakeRuntime()))
+
+        response = client.post("/api/research/missing/resume")
+
+        self.assertEqual(response.status_code, 404)
 
 
 

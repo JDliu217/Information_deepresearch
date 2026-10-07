@@ -85,6 +85,13 @@ I8 的 `ResearchRepository` 使用 SQLAlchemy 保存研究状态快照和有序�
 停止。内存实现用于 Mock 测试，Redis 实现用于真实部署。本轮尚未启用检查点、恢复和
 SSE 接口。
 
+`iteration-10` 增加 FastAPI 传输层。`POST /api/research/stream` 把
+`ResearchGraphRuntime.stream()` 转成 SSE；状态、取消和历史事件接口分别读取 I9 的
+`RunControlStore` 和 I8 的 `ResearchRepository`。LangGraph 使用 `session_id` 作为
+`thread_id`，默认注入 `InMemorySaver`，因此取消后的任务可以通过
+`POST /api/research/{session_id}/resume` 从未完成节点继续。内存 checkpoint 只用于本地
+测试和当前学习阶段，生产环境的持久化 checkpoint 将在后续基础设施完善后替换。
+
 ## 4. 必须保留的对外结果
 
 最终结果必须包含：
@@ -119,6 +126,7 @@ SSE 接口。
 | `iteration-07` | 使用 LangGraph 编排唯一的 V2 主工作流，保留 `run()`、`stream()` 和事件协议 |
 | `iteration-08` | PostgreSQL、SQLAlchemy、Alembic、Repository 和 LangGraph runtime 持久化接入 |
 | `iteration-09` | Redis 运行状态、取消标志、内存测试实现和 runtime 控制接口 |
+| `iteration-10` | FastAPI、SSE、状态/取消/历史事件接口和 LangGraph checkpoint 恢复 |
 | `iteration-10` | FastAPI SSE 接口、检查点、恢复和取消 |
 | `iteration-11` | 真实 LLM、Bocha 搜索和网页来源提取 |
 | `iteration-12` | RAG、Embedding、Milvus 和本地知识库 |

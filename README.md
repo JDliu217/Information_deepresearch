@@ -23,7 +23,8 @@
 - iteration-07：使用 LangGraph 编排唯一的 V2 主工作流，保留原有事件流接口。
 - iteration-08：加入 SQLAlchemy 持久化模型、Repository 和 Alembic 迁移，并接入 LangGraph runtime。
 - iteration-09：加入 Redis 运行状态、取消标志和 runtime 控制接口。
-- 后续迭代：加入 SSE、检查点、本地知识库、真实服务和简化前端。
+- iteration-10：增加 FastAPI、SSE、状态查询、取消、历史事件和 LangGraph checkpoint 恢复接口。
+- 后续迭代：加入真实服务、本地知识库和简化前端。
 
 ## 学习方式
 
@@ -77,6 +78,14 @@ I9 增加了 `RunControlStore`。`InMemoryRunControlStore` 用于本地测试，
 运行摘要；调用 `runtime.request_cancel(session_id)` 会设置取消标志，流程在下一个图节点
 边界停止并标记为 `cancelled`。Redis 只保存短期运行控制数据，完整状态和事件仍由 I8
 的 PostgreSQL Repository 保存。
+
+I10 增加 FastAPI 接口：`POST /api/research/stream` 以 SSE 推送 `ResearchEvent`，
+`GET /api/research/{session_id}/status` 查询运行状态，`POST /api/research/{session_id}/cancel`
+请求取消，`GET /api/research/{session_id}/events` 读取已持久化事件，
+`POST /api/research/{session_id}/resume` 从 LangGraph checkpoint 恢复并继续推送 SSE。
+默认 API 使用内存运行控制和内存 checkpoint，方便本地测试；部署时可以注入 Redis、
+PostgreSQL Repository 和其他 checkpoint 实现。FastAPI 只负责 HTTP/SSE 传输，不复制 Agent
+或 LangGraph 编排逻辑。
 
 事件类型包括 `research_started`、`phase_started`、`outline_ready`、
 `research_evidence_ready`、`analysis_ready`、`draft_ready`、`review_completed` 和 `research_completed`。
