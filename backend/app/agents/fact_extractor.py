@@ -163,25 +163,36 @@ class FactExtractorAgent(BaseAgent):
     def _normalize_extracted_facts(result: dict[str, Any]) -> list[dict[str, Any]]:
         """Map the reference DeepScout response to the local fact contract."""
 
-        facts = result.get("facts")
-        if facts is None:
-            extracted = result.get("extracted_facts", [])
-            if not isinstance(extracted, list):
-                raise ValueError("FactExtractor 返回的 extracted_facts 必须是列表")
-            facts = []
-            for item in extracted:
-                if not isinstance(item, dict):
-                    raise ValueError("FactExtractor extracted_facts 元素必须是对象")
-                facts.append(
-                    {
-                        **item,
-                        "source_title": item.get("source_title") or item.get("source_name", ""),
-                        "confidence": item.get("confidence", item.get("credibility_score", 0.5)),
-                    }
-                )
+        # DeepScout's public contract is ``extracted_facts``.  Some older
+        # adapters also emit ``facts``; prefer the reference field when it
+        # contains data so an incomplete compatibility field cannot invalidate
+        # an otherwise usable response.
+        extracted = result.get("extracted_facts")
+        legacy = result.get("facts")
+        candidates: list[tuple[str, Any]] = []
+        if extracted is not None:
+            candidates.append(("extracted_facts", extracted))
+        if legacy is not None and (not isinstance(extracted, list) or not extracted):
+            candidates.append(("facts", legacy))
+        if not candidates:
+            return []
+
+        name, facts = candidates[0]
         if not isinstance(facts, list):
-            raise ValueError("FactExtractor 返回的 facts 必须是列表")
-        return facts
+            raise ValueError(f"FactExtractor 返回的 {name} 必须是列表")
+
+        normalized: list[dict[str, Any]] = []
+        for item in facts:
+            if not isinstance(item, dict):
+                raise ValueError(f"FactExtractor {name} 元素必须是对象")
+            normalized.append(
+                {
+                    **item,
+                    "source_title": item.get("source_title") or item.get("source_name", ""),
+                    "confidence": item.get("confidence", item.get("credibility_score", 0.5)),
+                }
+            )
+        return normalized
 
     @staticmethod
     def _string_list(value: Any) -> list[str]:

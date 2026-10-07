@@ -129,6 +129,25 @@ class FollowUpFactClient(LLMClient):
         return ""
 
 
+class MixedFactClient(LLMClient):
+    async def complete_json(self, role, payload):
+        source = payload["sources"][0]
+        return {
+            "facts": [{"content": "旧字段缺少来源"}],
+            "extracted_facts": [
+                {
+                    "content": "参考字段中的有效事实。",
+                    "source_name": source["source"],
+                    "source_url": source["url"],
+                    "credibility_score": 0.9,
+                }
+            ],
+        }
+
+    async def complete_text(self, role, payload):
+        return ""
+
+
 class FactExtractorAgentTests(unittest.TestCase):
     def test_fact_extractor_calls_once_per_section_with_reference_limits(self):
         class CapturingClient(LLMClient):
@@ -221,6 +240,21 @@ class FactExtractorAgentTests(unittest.TestCase):
             state.pending_search_queries,
             ["原始统计来源", "补充年度数据"],
         )
+
+    def test_fact_extractor_prefers_reference_facts_over_invalid_legacy_field(self):
+        state = ResearchState("测试问题")
+        state.raw_sources = [
+            {
+                "title": "来源",
+                "url": "https://example.com/source",
+                "source": "测试站点",
+                "summary": "摘要",
+            }
+        ]
+
+        asyncio.run(FactExtractorAgent(MixedFactClient()).run(state))
+
+        self.assertEqual([fact["content"] for fact in state.facts], ["参考字段中的有效事实。"])
 
     def test_fact_extractor_turns_raw_sources_into_facts(self):
         async def run_chain():
