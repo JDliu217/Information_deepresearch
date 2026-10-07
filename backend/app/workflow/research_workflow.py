@@ -145,6 +145,10 @@ class ResearchWorkflow:
                 review_result=state.review_result,
                 critic_feedback=state.critic_feedback,
                 quality_score=state.quality_score,
+                unresolved_issues=state.unresolved_issues,
+                fact_check_results=state.review_result.get("fact_check_results", []),
+                missing_aspects=state.review_result.get("missing_aspects", []),
+                strengths=state.review_result.get("strengths", []),
             )
 
             if state.review_result["verdict"] == "pass":
@@ -193,6 +197,10 @@ class ResearchWorkflow:
             references=state.references,
             review_result=state.review_result,
             critic_feedback=state.critic_feedback,
+            unresolved_issues=state.unresolved_issues,
+            fact_check_results=state.review_result.get("fact_check_results", []),
+            missing_aspects=state.review_result.get("missing_aspects", []),
+            strengths=state.review_result.get("strengths", []),
             insights=state.insights,
             data_points=state.data_points,
             charts=state.charts,

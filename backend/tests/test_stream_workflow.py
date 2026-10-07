@@ -75,6 +75,8 @@ class StreamWorkflowTests(unittest.TestCase):
         self.assertEqual(events[6]["chart_count"], 1)
         self.assertEqual(events[6]["code_execution_count"], 1)
         self.assertEqual(events[6]["code_executions"][0]["status"], "succeeded")
+        self.assertEqual(events[10]["unresolved_issues"], 0)
+        self.assertEqual(len(events[10]["fact_check_results"]), 3)
         self.assertEqual(
             set(events[8]["draft_sections"]),
             {"sec_1", "sec_2", "sec_3"},
@@ -113,6 +115,7 @@ class StreamWorkflowTests(unittest.TestCase):
         self.assertEqual(evidence_events[1]["iteration"], 1)
         self.assertEqual(events[-1]["type"], "research_completed")
         self.assertEqual(events[-1]["review_result"]["verdict"], "pass")
+        self.assertEqual(events[-1]["unresolved_issues"], 0)
 
 
 if __name__ == "__main__":

@@ -75,7 +75,15 @@ EVENT_REQUIRED_FIELDS = {
         {"report", "outline", "draft_sections", "revision"}
     ),
     ResearchEventType.REVIEW_COMPLETED: frozenset(
-        {"review_result", "critic_feedback", "quality_score"}
+        {
+            "review_result",
+            "critic_feedback",
+            "quality_score",
+            "unresolved_issues",
+            "fact_check_results",
+            "missing_aspects",
+            "strengths",
+        }
     ),
     ResearchEventType.RESEARCH_COMPLETED: frozenset(
         {
@@ -84,6 +92,10 @@ EVENT_REQUIRED_FIELDS = {
             "references",
             "review_result",
             "critic_feedback",
+            "unresolved_issues",
+            "fact_check_results",
+            "missing_aspects",
+            "strengths",
             "insights",
             "data_points",
             "charts",
