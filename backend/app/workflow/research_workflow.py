@@ -157,9 +157,11 @@ class ResearchWorkflow:
                 break
 
             state.iteration += 1
-            if state.review_result["needs_more_research"]:
+            review_route = CriticAgent.route_review(state.review_result)
+            if review_route["should_research"] or state.review_result["needs_more_research"]:
                 state.pending_search_queries = (
-                    state.review_result["search_queries"]
+                    review_route["search_queries"]
+                    or state.review_result["search_queries"]
                     or state.review_result["issues"]
                     or state.research_questions
                 )

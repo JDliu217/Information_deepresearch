@@ -32,6 +32,26 @@ class SequencedReviewLLM(MockLLMClient):
         return await super().complete_text(role, payload)
 
 
+class StructuredRoutingLLM(SequencedReviewLLM):
+    async def complete_json(self, role, payload):
+        if role == "critic":
+            result = await super().complete_json(role, payload)
+            if result["verdict"] == "needs_revision":
+                result["needs_more_research"] = False
+                result["search_queries"] = []
+                result["issues"] = [{
+                    "id": "issue_logic",
+                    "target_section": "sec_1",
+                    "issue_type": "missing_source",
+                    "severity": "major",
+                    "description": "需要补充数据来源",
+                    "suggestion": "搜索官方统计",
+                    "requires_new_search": True,
+                    "search_query": "官方统计数据",
+                }]
+            return result
+        return await super().complete_json(role, payload)
+
 class RecordingSearchClient(MockSearchClient):
     def __init__(self):
         self.queries = []
@@ -146,6 +166,20 @@ class ResearchWorkflowTests(unittest.TestCase):
             len([payload for payload in llm.writer_payloads if payload.get("mode") == "report"]),
             2,
         )
+
+    def test_workflow_uses_structured_issue_to_choose_search(self):
+        llm = StructuredRoutingLLM(
+            [
+                review("needs_revision", issues=["旧格式问题"]),
+                review("pass", score=8.0),
+            ]
+        )
+        search = RecordingSearchClient()
+        workflow = ResearchWorkflow(llm, search, max_iterations=1)
+
+        asyncio.run(workflow.run("新能源汽车行业趋势"))
+
+        self.assertEqual(search.queries[-1], "官方统计数据")
 
     def test_workflow_rejects_negative_iteration_limit(self):
         with self.assertRaisesRegex(ValueError, "max_iterations"):
