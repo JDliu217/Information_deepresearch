@@ -51,6 +51,29 @@ class GraphNodeTests(unittest.TestCase):
         self.assertEqual(started["events"][0]["phase"], "planning")
         self.assertEqual(result["events"][0]["type"], "outline_ready")
 
+    def test_extract_facts_consumes_supplementary_flag_after_emitting_event(self):
+        state = ResearchState("测试问题")
+        state.raw_sources = [
+            {
+                "title": "补充来源",
+                "url": "https://example.com/supplementary",
+                "source": "测试站点",
+                "summary": "补充摘要",
+            }
+        ]
+
+        result = asyncio.run(
+            self.nodes.extract_facts(
+                {
+                    **initial_graph_state(state),
+                    "supplementary": True,
+                }
+            )
+        )
+
+        self.assertFalse(result["supplementary"])
+        self.assertTrue(result["events"][0]["supplementary"])
+
 
 if __name__ == "__main__":
     unittest.main()

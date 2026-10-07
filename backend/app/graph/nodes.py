@@ -106,6 +106,10 @@ class ResearchGraphNodes:
         await self.fact_extractor.run(state)
         return {
             "research_state": state,
+            # The current extraction pass has consumed the supplementary
+            # search batch. If more outline sections remain, the next route
+            # must use the normal section search branch.
+            "supplementary": False,
             "events": [
                 self._event(
                     state,
