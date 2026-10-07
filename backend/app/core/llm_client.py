@@ -168,6 +168,24 @@ class MockLLMClient(LLMClient):
                 ],
             }
 
+        if role == "code_wizard":
+            data_points = payload.get("data_points", [])
+            chart_ids = [
+                str(chart.get("id", "")).strip()
+                for chart in payload.get("charts", [])
+                if isinstance(chart, dict) and str(chart.get("id", "")).strip()
+            ]
+            return {
+                "purpose": "根据已验证的数据点生成分析结果和图表产物。",
+                "code": (
+                    "# CodeWizard 生成的待执行分析代码\n"
+                    f"data_point_count = {len(data_points)}\n"
+                    "print({'data_point_count': data_point_count})"
+                ),
+                "expected_outputs": ["analysis_summary"],
+                "chart_ids": chart_ids,
+            }
+
         if role == "critic":
             report = str(payload.get("report", "")).strip()
             facts = payload.get("facts", [])
