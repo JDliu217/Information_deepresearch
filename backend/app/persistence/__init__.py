@@ -4,6 +4,12 @@
 """
 
 from .base import Base
+from .repository import ResearchRepository
 from .models import ResearchEventRecord, ResearchRunRecord
 
-__all__ = ["Base", "ResearchEventRecord", "ResearchRunRecord"]
+__all__ = [
+    "Base",
+    "ResearchEventRecord",
+    "ResearchRepository",
+    "ResearchRunRecord",
+]
