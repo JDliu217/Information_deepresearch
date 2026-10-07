@@ -71,7 +71,9 @@ class ResearchGraphNodes:
     async def research(self, graph_state: ResearchGraphState) -> dict[str, Any]:
         state = graph_state["research_state"]
         supplementary = bool(graph_state.get("supplementary", False))
-        events = [
+        await self.researcher.run(state)
+        return {
+            "events": [
             self._event(
                 state,
                 "phase_started",
@@ -79,45 +81,59 @@ class ResearchGraphNodes:
                 agent=self.researcher.name,
                 supplementary=supplementary,
             )
-        ]
-        await self.researcher.run(state)
+            ]
+        }
+
+    async def extract_facts(self, graph_state: ResearchGraphState) -> dict[str, Any]:
+        state = graph_state["research_state"]
+        supplementary = bool(graph_state.get("supplementary", False))
         await self.fact_extractor.run(state)
-        events.append(
-            self._event(
-                state,
-                "research_evidence_ready",
-                supplementary=supplementary,
-                source_count=len(state.raw_sources),
-                fact_count=len(state.facts),
-                sources=state.raw_sources,
-                facts=state.facts,
-                references=state.references,
-            )
-        )
-        events.append(
-            self._event(
-                state,
-                "phase_started",
-                phase="analyzing",
-                agent=self.data_analyst.name,
-            )
+        return {
+            "events": [
+                self._event(
+                    state,
+                    "research_evidence_ready",
+                    supplementary=supplementary,
+                    source_count=len(state.raw_sources),
+                    fact_count=len(state.facts),
+                    sources=state.raw_sources,
+                    facts=state.facts,
+                    references=state.references,
+                )
+            ]
+        }
+
+    async def analyze(self, graph_state: ResearchGraphState) -> dict[str, Any]:
+        state = graph_state["research_state"]
+        event = self._event(
+            state,
+            "phase_started",
+            phase="analyzing",
+            agent=self.data_analyst.name,
         )
         await self.data_analyst.run(state)
+        return {
+            "events": [event]
+        }
+
+    async def execute_analysis(self, graph_state: ResearchGraphState) -> dict[str, Any]:
+        state = graph_state["research_state"]
         await self.code_wizard.run(state)
-        events.append(
-            self._event(
-                state,
-                "analysis_ready",
-                insights=state.insights,
-                data_points=state.data_points,
-                charts=state.charts,
-                code_executions=state.code_executions,
-                insight_count=len(state.insights),
-                chart_count=len(state.charts),
-                code_execution_count=len(state.code_executions),
-            )
-        )
-        return {"events": events}
+        return {
+            "events": [
+                self._event(
+                    state,
+                    "analysis_ready",
+                    insights=state.insights,
+                    data_points=state.data_points,
+                    charts=state.charts,
+                    code_executions=state.code_executions,
+                    insight_count=len(state.insights),
+                    chart_count=len(state.charts),
+                    code_execution_count=len(state.code_executions),
+                )
+            ]
+        }
 
     async def write(self, graph_state: ResearchGraphState) -> dict[str, Any]:
         state = graph_state["research_state"]
