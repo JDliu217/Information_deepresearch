@@ -20,7 +20,8 @@
 - iteration-04：加入 DataAnalyst，从数据点生成洞察和 ECharts 配置，并接入报告和事件流。
 - iteration-05：加入 CodeWizard、受限统计表达式执行、错误重试和代码执行记录。
 - iteration-06：完善章节级审核上下文、结构化 Critic 反馈、事实核查和审核路由。
-- 后续迭代：加入 LangGraph、检查点、本地知识库和简化前端。
+- iteration-07：使用 LangGraph 编排唯一的 V2 主工作流，保留原有事件流接口。
+- 后续迭代：加入检查点、本地知识库和简化前端。
 
 ## 学习方式
 
@@ -42,7 +43,7 @@
 
 I6 的审核结果同时保留两种形式：`review_result["issues"]` 继续提供旧的字符串列表，
 `review_result["structured_issues"]` 提供问题类型、严重程度、章节位置、证据、修复建议和
-是否需要新搜索等字段。这样后续接入真实 LLM 或 LangGraph 时，旧调用方仍可工作，新的路由
+是否需要新搜索等字段。这样后续接入真实 LLM 时，旧调用方仍可工作，新的路由
 逻辑也能使用完整审核信息。
 
 当 Critic 发现缺少来源、内容不完整或信息过期等重大问题时，工作流会去重并限制补充查询，
@@ -57,6 +58,13 @@ I6 的审核结果同时保留两种形式：`review_result["issues"]` 继续提
 事件由 `backend/app/domain/events.py` 中的 `ResearchEvent` 统一转成普通字典，
 不依赖 Web 框架。当前可以在 Python 内部验证事件顺序；FastAPI 和 SSE 会在之后的步骤加入。
 
+从 I7 开始，节点编排由 `backend/app/graph/research_graph.py` 中的 LangGraph
+`StateGraph` 负责。`ResearchWorkflow` 仍然提供原来的 `run()` 和 `stream()` 方法，
+并把图节点更新转换为原来的研究事件，因此调用方不需要了解 LangGraph 的内部格式。
+LangGraph 负责流程和分支；Planner、Researcher、Writer、Critic 等 Agent 仍然是独立的
+业务组件。每个 Agent 节点显式写回 `ResearchState`，阶段开始事件在耗时 Agent 运行前发出。
+当前依赖版本写在 `backend/requirements.txt` 中；检查点、恢复和取消将在后续迭代接入。
+
 事件类型包括 `research_started`、`phase_started`、`outline_ready`、
 `research_evidence_ready`、`analysis_ready`、`draft_ready`、`review_completed` 和 `research_completed`。
 `draft_ready` 事件还包含 `outline` 和 `draft_sections`，可以按章节读取中间结果。
@@ -65,11 +73,22 @@ I6 的审核结果同时保留两种形式：`review_result["issues"]` 继续提
 所有事件都有 `type`、`session_id`、`phase` 和 `iteration`；每种事件的必需业务字段
 见 `backend/app/domain/events.py` 中的 `EVENT_REQUIRED_FIELDS`。
 
+## 本地验证
+
+在本机 Windows 环境中，LangGraph 1.2.14 的依赖使用 64 位 Python 安装。本机默认的
+`python` 是 32 位，因此先用已安装的
+64 位 Python 3.13 建立虚拟环境：
+
+```powershell
+uv venv --python 3.13 .venv
+uv pip install --python .venv\Scripts\python.exe -r backend\requirements.txt
+```
+
 测试事件流：
 
 ```powershell
 $env:PYTHONPATH = "backend"
-python -m unittest discover -s backend/tests -v
+.venv\Scripts\python.exe -m unittest discover -s backend/tests -v
 ```
 
 ## 命令行运行
@@ -78,11 +97,11 @@ python -m unittest discover -s backend/tests -v
 
 ```powershell
 $env:PYTHONPATH = "backend"
-python -m app.scripts.run_research "中国新能源汽车行业的发展趋势是什么？"
+.venv\Scripts\python.exe -m app.scripts.run_research "中国新能源汽车行业的发展趋势是什么？"
 ```
 
 不传问题时，会进入交互式输入：
 
 ```powershell
-python -m app.scripts.run_research
+.venv\Scripts\python.exe -m app.scripts.run_research
 ```

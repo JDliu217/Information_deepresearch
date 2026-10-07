@@ -29,7 +29,7 @@ V2 的核心研究行为。
 | CodeWizard | `CodeWizardAgent` | 已有受限统计执行版；Docker 隔离待后续实现 |
 | LeadWriter | `WriterAgent` | 已有简化版 |
 | CriticMaster | `CriticAgent` | 已有简化版 |
-| V2 Graph | `ResearchWorkflow` | 已有简化版 |
+| V2 Graph | `ResearchWorkflow` + `app.graph` | I7 已使用 LangGraph 主图，ResearchWorkflow 只负责兼容调用和事件适配 |
 
 ## 2. 必须保留的状态数据
 
@@ -67,6 +67,13 @@ V2 的核心研究行为。
 直接进入 Writer 修订。补充搜索查询会合并 Critic 给出的查询、问题级查询和遗漏方面，并去重后
 限制数量，避免一次审核产生无限查询。
 
+`iteration-07` 使用 LangGraph 的 `StateGraph` 编排同一条 V2 主链路。图状态只使用一种
+`ResearchState` 业务模型；每个 Agent 节点调用 I1 到 I6 已有的 Agent，并显式写回更新后的状态。
+审核后的条件边分别进入补充研究、Writer 修订或完成节点，并在下一轮回到 Critic。
+阶段开始事件在 Agent 执行前由独立节点发出。`ResearchWorkflow.run()` 和
+`ResearchWorkflow.stream()` 继续作为稳定入口，`stream()` 只转发 `ResearchEvent`，
+所以后续 FastAPI SSE 不需要读取 LangGraph 的内部更新对象。本轮尚未启用检查点。
+
 ## 4. 必须保留的对外结果
 
 最终结果必须包含：
@@ -98,7 +105,7 @@ V2 的核心研究行为。
 | `iteration-04` | 实现 DataAnalyst，输出洞察和 ECharts 配置，并接入报告与事件流 |
 | `iteration-05` | 实现 CodeWizard，完成受限统计执行、错误重试、执行记录和工作流接入 |
 | `iteration-06` | 完善章节级审核上下文、引用追踪、结构化 CriticMaster 反馈和审核路由 |
-| `iteration-07` | 使用 LangGraph 编排唯一的 V2 主工作流 |
+| `iteration-07` | 使用 LangGraph 编排唯一的 V2 主工作流，保留 `run()`、`stream()` 和事件协议 |
 | `iteration-08` | PostgreSQL、SQLAlchemy、Alembic 和研究持久化模型 |
 | `iteration-09` | Redis 运行状态、取消标志和必要缓存 |
 | `iteration-10` | FastAPI SSE 接口、检查点、恢复和取消 |
