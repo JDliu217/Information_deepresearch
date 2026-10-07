@@ -36,9 +36,10 @@ class ResearchGraphTests(unittest.TestCase):
 
         result = asyncio.run(graph.ainvoke(initial_graph_state(state)))
 
-        self.assertEqual(result["research_state"], state)
-        self.assertEqual(state.phase, "completed")
-        self.assertTrue(state.final_report)
+        self.assertIsNot(result["research_state"], state)
+        self.assertEqual(state.phase, "init")
+        self.assertEqual(result["research_state"].phase, "completed")
+        self.assertTrue(result["research_state"].final_report)
         self.assertEqual(
             [event["type"] for event in result["events"]],
             [

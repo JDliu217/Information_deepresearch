@@ -1,1 +1,1 @@
-langgraph>=0.1.19,<0.2
+langgraph==1.2.14

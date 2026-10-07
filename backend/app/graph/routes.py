@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 from typing import Any
 
 from app.agents.critic import CriticAgent
@@ -16,10 +17,11 @@ def prepare_review_route(graph_state: ResearchGraphState) -> dict[str, Any]:
     迭代次数也结束；否则根据结构化审核结果决定补充搜索或直接修订。
     """
 
-    state = graph_state["research_state"]
+    state = deepcopy(graph_state["research_state"])
     review = state.review_result
     if review.get("verdict") == "pass" or state.iteration >= state.max_iterations:
         return {
+            "research_state": state,
             "route": "stop",
             "supplementary": False,
             "revision": False,
@@ -38,12 +40,14 @@ def prepare_review_route(graph_state: ResearchGraphState) -> dict[str, Any]:
             or state.research_questions
         )
         return {
+            "research_state": state,
             "route": "research",
             "supplementary": True,
             "revision": True,
         }
 
     return {
+        "research_state": state,
         "route": "revise",
         "supplementary": False,
         "revision": True,

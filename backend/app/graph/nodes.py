@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any
 
@@ -52,7 +53,7 @@ class ResearchGraphNodes:
         }
 
     async def plan(self, graph_state: ResearchGraphState) -> dict[str, Any]:
-        state = graph_state["research_state"]
+        state = deepcopy(graph_state["research_state"])
         events = [self._event(state, "phase_started", phase="planning", agent=self.planner.name)]
         await self.planner.run(state)
         events.append(
@@ -66,29 +67,31 @@ class ResearchGraphNodes:
                 mind_map=state.mind_map,
             )
         )
-        return {"events": events}
+        return {"research_state": state, "events": events}
 
     async def research(self, graph_state: ResearchGraphState) -> dict[str, Any]:
-        state = graph_state["research_state"]
+        state = deepcopy(graph_state["research_state"])
         supplementary = bool(graph_state.get("supplementary", False))
         await self.researcher.run(state)
         return {
+            "research_state": state,
             "events": [
-            self._event(
-                state,
-                "phase_started",
-                phase="researching",
-                agent=self.researcher.name,
-                supplementary=supplementary,
-            )
-            ]
+                self._event(
+                    state,
+                    "phase_started",
+                    phase="researching",
+                    agent=self.researcher.name,
+                    supplementary=supplementary,
+                )
+            ],
         }
 
     async def extract_facts(self, graph_state: ResearchGraphState) -> dict[str, Any]:
-        state = graph_state["research_state"]
+        state = deepcopy(graph_state["research_state"])
         supplementary = bool(graph_state.get("supplementary", False))
         await self.fact_extractor.run(state)
         return {
+            "research_state": state,
             "events": [
                 self._event(
                     state,
@@ -104,7 +107,7 @@ class ResearchGraphNodes:
         }
 
     async def analyze(self, graph_state: ResearchGraphState) -> dict[str, Any]:
-        state = graph_state["research_state"]
+        state = deepcopy(graph_state["research_state"])
         event = self._event(
             state,
             "phase_started",
@@ -113,13 +116,15 @@ class ResearchGraphNodes:
         )
         await self.data_analyst.run(state)
         return {
-            "events": [event]
+            "research_state": state,
+            "events": [event],
         }
 
     async def execute_analysis(self, graph_state: ResearchGraphState) -> dict[str, Any]:
-        state = graph_state["research_state"]
+        state = deepcopy(graph_state["research_state"])
         await self.code_wizard.run(state)
         return {
+            "research_state": state,
             "events": [
                 self._event(
                     state,
@@ -136,7 +141,7 @@ class ResearchGraphNodes:
         }
 
     async def write(self, graph_state: ResearchGraphState) -> dict[str, Any]:
-        state = graph_state["research_state"]
+        state = deepcopy(graph_state["research_state"])
         revision = bool(graph_state.get("revision", False))
         events = [
             self._event(
@@ -158,10 +163,10 @@ class ResearchGraphNodes:
                 revision=revision,
             )
         )
-        return {"events": events}
+        return {"research_state": state, "events": events}
 
     async def review(self, graph_state: ResearchGraphState) -> dict[str, Any]:
-        state = graph_state["research_state"]
+        state = deepcopy(graph_state["research_state"])
         events = [
             self._event(state, "phase_started", phase="reviewing", agent=self.critic.name)
         ]
@@ -179,7 +184,7 @@ class ResearchGraphNodes:
                 strengths=state.review_result.get("strengths", []),
             )
         )
-        return {"events": events}
+        return {"research_state": state, "events": events}
 
     @staticmethod
     def route_review(graph_state: ResearchGraphState) -> dict[str, Any]:
@@ -189,9 +194,10 @@ class ResearchGraphNodes:
 
     @staticmethod
     def complete(graph_state: ResearchGraphState) -> dict[str, Any]:
-        state = graph_state["research_state"]
+        state = deepcopy(graph_state["research_state"])
         state.phase = "completed"
         return {
+            "research_state": state,
             "events": [
                 ResearchGraphNodes._event(
                     state,

@@ -72,8 +72,9 @@ class GraphRouteTests(unittest.TestCase):
 
         self.assertEqual(result["route"], "research")
         self.assertTrue(result["supplementary"])
-        self.assertEqual(state.iteration, 1)
-        self.assertEqual(state.pending_search_queries, ["最新数据"])
+        self.assertEqual(state.iteration, 0)
+        self.assertEqual(result["research_state"].iteration, 1)
+        self.assertEqual(result["research_state"].pending_search_queries, ["最新数据"])
         self.assertEqual(select_review_route({**initial_graph_state(state), **result}), "research")
 
     def test_route_stops_when_max_iterations_is_reached(self):
@@ -103,9 +104,10 @@ class GraphRouteTests(unittest.TestCase):
 
         result = asyncio.run(graph.ainvoke(initial_graph_state(state)))
 
-        self.assertEqual(state.phase, "completed")
-        self.assertEqual(state.iteration, 1)
-        self.assertEqual(state.review_result["verdict"], "pass")
+        self.assertEqual(state.phase, "init")
+        self.assertEqual(result["research_state"].phase, "completed")
+        self.assertEqual(result["research_state"].iteration, 1)
+        self.assertEqual(result["research_state"].review_result["verdict"], "pass")
         self.assertEqual(search.queries[-1], "最新数据")
         evidence_events = [
             event for event in result["events"] if event["type"] == "research_evidence_ready"

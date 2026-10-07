@@ -68,9 +68,11 @@ class ResearchWorkflow:
         """执行一次完整研究并返回最终状态。"""
 
         state = self._new_state(query, session_id)
-        async for _ in self._stream_state(state):
-            pass
-        return state
+        result = await self.graph.ainvoke(
+            initial_graph_state(state),
+            config=self._graph_config(),
+        )
+        return result["research_state"]
 
     async def stream(
         self,
@@ -103,7 +105,11 @@ class ResearchWorkflow:
         """运行 LangGraph，并只转发节点产生的业务事件。"""
 
         graph_input = initial_graph_state(state)
-        async for update in self.graph.astream(graph_input, stream_mode="updates"):
+        async for update in self.graph.astream(
+            graph_input,
+            config=self._graph_config(),
+            stream_mode="updates",
+        ):
             if not isinstance(update, dict):
                 continue
             for node_update in update.values():
@@ -114,3 +120,8 @@ class ResearchWorkflow:
                     for event in events:
                         if isinstance(event, dict):
                             yield event
+
+    def _graph_config(self) -> dict[str, int]:
+        """允许每次审核修订循环完成，同时仍限制意外的无限循环。"""
+
+        return {"recursion_limit": max(25, 12 + 8 * self.max_iterations)}

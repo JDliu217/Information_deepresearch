@@ -42,7 +42,9 @@ class GraphNodeTests(unittest.TestCase):
 
         result = asyncio.run(self.nodes.plan(initial_graph_state(state)))
 
-        self.assertTrue(state.outline)
+        self.assertFalse(state.outline)
+        self.assertTrue(result["research_state"].outline)
+        self.assertIsNot(result["research_state"], state)
         self.assertEqual([event["type"] for event in result["events"]], [
             "phase_started",
             "outline_ready",

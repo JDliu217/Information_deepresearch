@@ -167,6 +167,19 @@ class ResearchWorkflowTests(unittest.TestCase):
             2,
         )
 
+    def test_workflow_allows_multiple_review_iterations(self):
+        llm = SequencedReviewLLM(
+            [review("needs_revision", issues=["继续修订"])] * 4
+            + [review("pass", score=8.0)]
+        )
+        workflow = ResearchWorkflow(llm, MockSearchClient(), max_iterations=4)
+
+        state = asyncio.run(workflow.run("测试行业"))
+
+        self.assertEqual(state.phase, "completed")
+        self.assertEqual(state.iteration, 4)
+        self.assertEqual(state.review_result["verdict"], "pass")
+
     def test_workflow_uses_structured_issue_to_choose_search(self):
         llm = StructuredRoutingLLM(
             [
