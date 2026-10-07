@@ -8,6 +8,7 @@ from app.core.run_control import InMemoryRunControlStore, RunControlStore
 from app.graph.runtime import ResearchGraphRuntime
 
 from .dependencies import build_default_runtime
+from .research import router as research_router
 from .schemas import HealthResponse
 
 
@@ -22,6 +23,7 @@ def create_app(
     app = FastAPI(title="Information DeepResearch API", version="2")
     app.state.run_control = control
     app.state.research_runtime = runtime or build_default_runtime(control)
+    app.include_router(research_router)
 
     @app.get("/health", response_model=HealthResponse)
     async def health() -> HealthResponse:
