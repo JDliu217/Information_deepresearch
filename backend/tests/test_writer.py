@@ -12,6 +12,32 @@ from app.domain.state import ResearchState
 
 
 class WriterAgentTests(unittest.TestCase):
+    def test_writer_revision_uses_bounded_report_feedback_and_new_facts(self):
+        class CapturingWriterClient(MockLLMClient):
+            def __init__(self):
+                self.payload = None
+
+            async def complete_text(self, role, payload, system_prompt="", user_prompt=""):
+                self.payload = payload
+                return "修订后的报告"
+
+        async def run():
+            client = CapturingWriterClient()
+            state = ResearchState("测试问题")
+            state.final_report = "报告内容" * 3000
+            state.critic_feedback = [
+                {"id": "issue-1", "description": "缺少来源", "resolved": False}
+            ]
+            state.facts = [{"content": f"事实 {index}"} for index in range(8)]
+            await WriterAgent(client).revise(state)
+            return state, client
+
+        state, client = asyncio.run(run())
+        self.assertEqual(state.final_report, "修订后的报告")
+        self.assertEqual(state.phase, "revising")
+        self.assertLessEqual(len(client.payload["original_content"]), 6000)
+        self.assertEqual(len(client.payload["new_facts"]), 5)
+
     def test_writer_generates_cited_report(self):
         async def run_chain():
             state = ResearchState("中国新能源汽车行业的发展趋势是什么？")

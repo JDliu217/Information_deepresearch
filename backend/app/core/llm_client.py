@@ -291,6 +291,19 @@ class MockLLMClient(LLMClient):
                 lines.append("当前章节还没有可引用的事实。")
             return "\n".join(lines)
 
+        if payload.get("mode") == "revision":
+            original = str(payload.get("original_content", "")).strip()
+            issues = payload.get("feedback", [])
+            lines = [original, "", "## 根据审核意见修订", ""]
+            if issues:
+                lines.extend(
+                    f"- 已处理：{issue.get('description', issue) if isinstance(issue, dict) else issue}"
+                    for issue in issues
+                )
+            else:
+                lines.append("- 当前没有未解决的审核问题。")
+            return "\n".join(lines).strip()
+
         if payload.get("mode") == "report":
             outline = payload.get("outline", [])
             draft_sections = payload.get("draft_sections", {})

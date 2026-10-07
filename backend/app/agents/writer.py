@@ -56,10 +56,10 @@ class WriterAgent(BaseAgent):
                 "mode": "section",
                 "query": state.query,
                 "section": section,
-                "facts": related_facts,
-                "data_points": state.data_points,
-                "insights": state.insights,
-                "charts": state.charts,
+                "facts": related_facts[:10],
+                "data_points": state.data_points[:10],
+                "insights": state.insights[:5],
+                "charts": self._charts_for_section(state.charts, section_id),
                 "code_executions": state.code_executions,
                 "review_result": state.review_result,
                 "iteration": state.iteration,
@@ -82,13 +82,13 @@ class WriterAgent(BaseAgent):
             "mode": "report",
             "query": state.query,
             "outline": normalized_outline,
-            "facts": state.facts,
+            "facts": state.facts[:30],
             "draft_sections": draft_sections,
-            "data_points": state.data_points,
-            "insights": state.insights,
+            "data_points": state.data_points[:20],
+            "insights": state.insights[:10],
             "charts": state.charts,
             "code_executions": state.code_executions,
-            "references": state.references,
+            "references": state.references[:30],
             "review_result": state.review_result,
             "iteration": state.iteration,
             "instruction": "整合各章节草稿，生成带 Markdown 标题和可点击来源链接的研究报告；若有审核意见，逐条处理。",
@@ -107,6 +107,45 @@ class WriterAgent(BaseAgent):
         state.final_report = report
         state.phase = "writing"
         return state
+
+    async def revise(self, state: ResearchState) -> ResearchState:
+        """审核后的报告修订模式，对齐 LeadWriter 的 revision 分支。"""
+
+        if not state.final_report.strip():
+            raise ValueError("没有可供修订的报告")
+        unresolved = [
+            issue
+            for issue in state.critic_feedback
+            if isinstance(issue, dict) and not issue.get("resolved")
+        ]
+        payload = {
+            "mode": "revision",
+            "query": state.query,
+            "original_content": state.final_report[:6000],
+            "feedback": unresolved,
+            "new_facts": state.facts[-5:],
+            "iteration": state.iteration,
+        }
+        revised = await self._complete_text(
+            payload,
+            system_prompt=self.SECTION_WRITING_SYSTEM,
+            user_prompt=self._render_prompt(self.REVISION_PROMPT, payload),
+        )
+        revised = revised.strip()
+        if not revised:
+            raise ValueError("Writer 没有生成修订内容")
+        state.final_report = revised
+        state.phase = "revising"
+        return state
+
+    @staticmethod
+    def _charts_for_section(charts: list[dict], section_id: str) -> list[dict]:
+        related = [
+            chart
+            for chart in charts
+            if not chart.get("section_id") or str(chart.get("section_id")).strip() == section_id
+        ]
+        return related[:10]
 
     @staticmethod
     def _facts_for_section(
