@@ -94,7 +94,10 @@ class ResearchGraphNodes:
 
     async def research(self, graph_state: ResearchGraphState) -> dict[str, Any]:
         state = deepcopy(graph_state["research_state"])
-        await self.researcher.run(state)
+        await self.researcher.run(
+            state,
+            supplementary=bool(graph_state.get("supplementary", False)),
+        )
         return {"research_state": state}
 
     async def extract_facts(self, graph_state: ResearchGraphState) -> dict[str, Any]:
@@ -116,6 +119,10 @@ class ResearchGraphNodes:
                 )
             ]
         }
+
+    @staticmethod
+    def prepare_follow_up_research(graph_state: ResearchGraphState) -> dict[str, Any]:
+        return {"supplementary": True}
 
     def analysis_started(self, graph_state: ResearchGraphState) -> dict[str, Any]:
         state = graph_state["research_state"]

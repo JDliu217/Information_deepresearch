@@ -217,6 +217,12 @@ search_query；仅措辞、逻辑组织或轻微偏差可直接修订。"""
 
         issues = CriticAgent._validate_issues(value.get("issues", []))
 
+        if verdict == "pass" and any(
+            issue.get("severity") in {"critical", "major"} and not issue.get("resolved")
+            for issue in issues
+        ):
+            raise ValueError("Critic verdict 为 pass 时不能存在未解决的 critical 或 major 问题")
+
         fact_checks = value.get("fact_check_results", [])
         if not isinstance(fact_checks, list):
             raise ValueError("Critic fact_check_results 必须是列表")

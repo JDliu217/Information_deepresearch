@@ -6,6 +6,7 @@ import asyncio
 import json
 import re
 from typing import Any
+from urllib.parse import urlparse
 
 from .llm_client import LLMClient
 from .llm_config import LLMSettings
@@ -114,7 +115,7 @@ class OpenAICompatibleLLMClient(LLMClient):
             "temperature": model_settings.temperature,
             "max_tokens": model_settings.max_tokens,
         }
-        if self._uses_deepseek(model_settings.model, self.settings.base_url):
+        if self._uses_deepseek(self.settings.base_url):
             thinking = self.settings.thinking_for(role)
             request["extra_body"] = {"thinking": {"type": thinking}}
             if thinking == "enabled":
@@ -151,10 +152,11 @@ class OpenAICompatibleLLMClient(LLMClient):
         ) from last_error
 
     @staticmethod
-    def _uses_deepseek(model: str, base_url: str) -> bool:
-        """Only send DeepSeek-specific request fields to a DeepSeek endpoint/model."""
+    def _uses_deepseek(base_url: str) -> bool:
+        """Provider-specific fields belong only on the DeepSeek API endpoint."""
 
-        return "deepseek" in model.lower() or "deepseek" in base_url.lower()
+        hostname = (urlparse(base_url).hostname or "").lower()
+        return hostname == "deepseek.com" or hostname.endswith(".deepseek.com")
 
     def _get_client(self) -> Any:
         if self.client is None:

@@ -16,6 +16,26 @@ from app.graph.research_graph import build_research_graph
 from app.graph.state import initial_graph_state
 
 
+class SixSectionLLM(MockLLMClient):
+    async def complete_json(self, role, payload):
+        if role == "planner":
+            return {
+                "outline": [
+                    {
+                        "id": f"sec_{index}",
+                        "title": f"章节 {index}",
+                        "description": f"描述 {index}",
+                        "search_queries": [f"查询 {index}"],
+                    }
+                    for index in range(1, 7)
+                ],
+                "research_questions": [f"问题 {index}" for index in range(1, 7)],
+                "hypotheses": [],
+                "key_entities": [],
+            }
+        return await super().complete_json(role, payload)
+
+
 def make_nodes() -> ResearchGraphNodes:
     llm = MockLLMClient()
     return ResearchGraphNodes(
@@ -30,6 +50,30 @@ def make_nodes() -> ResearchGraphNodes:
 
 
 class ResearchGraphTests(unittest.TestCase):
+    def test_graph_researches_all_sections_in_three_section_batches(self):
+        llm = SixSectionLLM()
+        graph = build_research_graph(
+            ResearchGraphNodes(
+                planner=PlannerAgent(llm),
+                researcher=ResearcherAgent(MockSearchClient()),
+                fact_extractor=FactExtractorAgent(llm),
+                data_analyst=DataAnalystAgent(llm),
+                code_wizard=CodeWizardAgent(llm),
+                writer=WriterAgent(llm),
+                critic=CriticAgent(llm),
+            )
+        )
+
+        result = asyncio.run(
+            graph.ainvoke(initial_graph_state(ResearchState("六章节问题")))
+        )
+
+        state = result["research_state"]
+        self.assertEqual(len(state.raw_sources), 6)
+        self.assertEqual(len(state.facts), 6)
+        self.assertEqual({fact["section_id"] for fact in state.facts}, {f"sec_{i}" for i in range(1, 7)})
+        self.assertTrue(all(section["status"] == "drafted" for section in state.outline))
+
     def test_linear_graph_runs_existing_agents_in_order(self):
         graph = build_research_graph(make_nodes())
         state = ResearchState("测试问题")

@@ -43,9 +43,15 @@ class ResearcherAgent(BaseAgent):
         self.max_sections = max_sections
         self.max_supplementary_queries = max_supplementary_queries
 
-    async def run(self, state: ResearchState) -> ResearchState:
+    async def run(
+        self,
+        state: ResearchState,
+        *,
+        supplementary: bool | None = None,
+    ) -> ResearchState:
         """搜索章节查询，并把来源与章节关联后写入共享状态。"""
-        supplementary = bool(state.pending_search_queries)
+        if supplementary is None:
+            supplementary = bool(state.pending_search_queries)
         if supplementary:
             tasks = [
                 {"query": query.strip(), "section_id": "", "section_title": "", "supplementary": True}
@@ -74,6 +80,7 @@ class ResearcherAgent(BaseAgent):
                 if task["section_id"]:
                     source["section_id"] = task["section_id"]
                     source["section_title"] = task["section_title"]
+                    source["section_ids"] = [task["section_id"]]
                 collected_sources.append(source)
 
         state.raw_sources = self._deduplicate_sources(collected_sources)
@@ -87,7 +94,8 @@ class ResearcherAgent(BaseAgent):
             for source in state.raw_sources
             if source.get("url")
         ]
-        state.pending_search_queries = []
+        if supplementary:
+            state.pending_search_queries = []
         if not supplementary:
             researched_ids = {
                 task["section_id"] for task in tasks if task.get("section_id")
@@ -134,6 +142,9 @@ class ResearcherAgent(BaseAgent):
         if tasks:
             return tasks
 
+        if state.outline:
+            return []
+
         return [
             {
                 "query": str(question).strip(),
@@ -150,6 +161,20 @@ class ResearcherAgent(BaseAgent):
         unique: dict[str, dict] = {}
         for source in sources:
             url = str(source.get("url", "")).strip()
-            if url and url not in unique:
+            if not url:
+                continue
+            if url not in unique:
                 unique[url] = source
+                continue
+            retained = unique[url]
+            section_ids = retained.setdefault(
+                "section_ids",
+                [retained["section_id"]] if retained.get("section_id") else [],
+            )
+            for section_id in source.get("section_ids", []):
+                if section_id not in section_ids:
+                    section_ids.append(section_id)
+            for field in ("summary", "snippet", "source", "date"):
+                if not retained.get(field) and source.get(field):
+                    retained[field] = source[field]
         return list(unique.values())

@@ -246,7 +246,7 @@ class ResearchGraphRuntime:
 
     def _graph_config(self, session_id: str | None = None) -> dict[str, Any]:
         config: dict[str, Any] = {
-            "recursion_limit": max(30, 20 + 12 * self.max_iterations),
+            "recursion_limit": max(80, 40 + 20 * self.max_iterations),
         }
         if session_id:
             config["configurable"] = {"thread_id": session_id}

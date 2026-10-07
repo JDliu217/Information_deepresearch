@@ -169,6 +169,21 @@ class RealLLMClientTests(unittest.TestCase):
         self.assertNotIn("extra_body", request)
         self.assertNotIn("reasoning_effort", request)
 
+    def test_deepseek_model_on_dashscope_does_not_receive_deepseek_parameters(self):
+        fake = FakeClient(['{"outline": []}'])
+        settings = self.settings(
+            base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
+            thinking="disabled",
+            agents={"planner": AgentModelSettings("deepseek-v3.2", 0.2, 1000)},
+        )
+        client = OpenAICompatibleLLMClient(settings, client=fake)
+
+        asyncio.run(client.complete_json("planner", {"query": "测试"}))
+
+        request = fake.chat.completions.requests[0]
+        self.assertNotIn("extra_body", request)
+        self.assertNotIn("reasoning_effort", request)
+
     def test_complete_text_extracts_report_field_from_json_response(self):
         fake = FakeClient(['{"full_report": "## 执行摘要\\n内容", "references": []}'])
         client = OpenAICompatibleLLMClient(self.settings(), client=fake)

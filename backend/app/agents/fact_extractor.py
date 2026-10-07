@@ -63,12 +63,15 @@ class FactExtractorAgent(BaseAgent):
 
         sections = self._sources_by_section(state.raw_sources)
         if not sections:
-            sections = [(None, state.raw_sources)]
+            state.phase = "researching"
+            return state
 
         all_facts: list[dict[str, Any]] = []
         all_entities: list[dict[str, Any]] = []
         all_insights: list[str] = []
         follow_up_queries: list[str] = []
+        hypothesis_evidence: list[dict[str, Any]] = []
+        analysis_notes: list[dict[str, Any]] = []
         for section_id, section_sources in sections:
             section = next(
                 (
@@ -103,20 +106,42 @@ class FactExtractorAgent(BaseAgent):
                 section_sources[: self.max_sources_per_section],
                 state.hypotheses,
             )
+            if section_id:
+                for fact in facts:
+                    fact["section_id"] = section_id
+                    fact["section_title"] = str(payload["section"]["title"])
             all_facts.extend(facts)
             all_entities.extend(self._validate_entities(result.get("entities_discovered", [])))
             all_insights.extend(self._string_list(result.get("key_insights", [])))
+            follow_up_queries.extend(self._string_list(result.get("source_tracing_queries", [])))
             follow_up_queries.extend(self._string_list(result.get("follow_up_queries", [])))
+            hypothesis_evidence.extend(self._validate_hypothesis_evidence(
+                result.get("hypothesis_evidence", []), state.hypotheses
+            ))
+            analysis_notes.append({
+                "agent": self.name,
+                "section_id": section_id,
+                "source_quality_assessment": str(result.get("source_quality_assessment", "")),
+                "missing_info": self._string_list(result.get("missing_info", [])),
+            })
 
         all_facts = self._deduplicate_facts(all_facts)
         state.facts = self._deduplicate_facts(state.facts + all_facts)
         self._append_data_points(state.data_points, all_facts)
         self._apply_hypothesis_evidence(state.hypotheses, all_facts)
+        self._apply_structured_hypothesis_evidence(state.hypotheses, hypothesis_evidence)
         self._update_knowledge_graph(state.knowledge_graph, all_entities)
         state.insights = list(dict.fromkeys([*state.insights, *all_insights]))
         state.pending_search_queries = list(
             dict.fromkeys([*state.pending_search_queries, *follow_up_queries])
         )[:5]
+        state.logs.extend(analysis_notes)
+        for section_id, section_sources in sections:
+            marker = section_id or "__unassigned__"
+            for source in section_sources:
+                extracted = source.setdefault("fact_extracted_sections", [])
+                if marker not in extracted:
+                    extracted.append(marker)
         state.phase = "researching"
         return state
 
@@ -126,8 +151,12 @@ class FactExtractorAgent(BaseAgent):
     ) -> list[tuple[str | None, list[dict[str, Any]]]]:
         grouped: dict[str | None, list[dict[str, Any]]] = {}
         for source in sources:
-            section_id = str(source.get("section_id", "")).strip() or None
-            grouped.setdefault(section_id, []).append(source)
+            ids = source.get("section_ids") or [source.get("section_id")]
+            for raw_id in ids:
+                section_id = str(raw_id or "").strip() or None
+                marker = section_id or "__unassigned__"
+                if marker not in source.get("fact_extracted_sections", []):
+                    grouped.setdefault(section_id, []).append(source)
         return list(grouped.items())
 
     @staticmethod
@@ -162,37 +191,80 @@ class FactExtractorAgent(BaseAgent):
             return []
         return list(dict.fromkeys(str(item).strip() for item in value if str(item).strip()))
 
+    @staticmethod
+    def _validate_hypothesis_evidence(
+        value: Any,
+        hypotheses: list[dict[str, Any]],
+    ) -> list[dict[str, str]]:
+        if value is None:
+            return []
+        if not isinstance(value, list):
+            raise ValueError("FactExtractor hypothesis_evidence 必须是列表")
+        valid_ids = {str(item.get("id", "")).strip() for item in hypotheses}
+        evidence: list[dict[str, str]] = []
+        for item in value:
+            if not isinstance(item, dict):
+                raise ValueError("FactExtractor hypothesis_evidence 元素必须是对象")
+            hypothesis_id = str(item.get("hypothesis_id", "")).strip()
+            evidence_type = str(item.get("evidence_type", "")).strip()
+            summary = str(item.get("evidence_summary", "")).strip()
+            if hypothesis_id not in valid_ids:
+                raise ValueError("FactExtractor hypothesis_evidence 引用了未知假设")
+            if evidence_type not in {"supports", "refutes", "inconclusive"} or not summary:
+                raise ValueError("FactExtractor hypothesis_evidence 类型或摘要无效")
+            evidence.append({
+                "hypothesis_id": hypothesis_id,
+                "evidence_type": evidence_type,
+                "evidence_summary": summary[:200],
+            })
+        return evidence
+
+    @staticmethod
+    def _apply_structured_hypothesis_evidence(
+        hypotheses: list[dict[str, Any]],
+        evidence: list[dict[str, str]],
+    ) -> None:
+        by_id = {str(item.get("id", "")).strip(): item for item in hypotheses}
+        for item in evidence:
+            hypothesis = by_id[item["hypothesis_id"]]
+            if item["evidence_type"] == "inconclusive":
+                continue
+            field = "evidence_for" if item["evidence_type"] == "supports" else "evidence_against"
+            entries = hypothesis.setdefault(field, [])
+            if item["evidence_summary"] not in entries:
+                entries.append(item["evidence_summary"])
+            for_count = len(hypothesis.get("evidence_for", []))
+            against_count = len(hypothesis.get("evidence_against", []))
+            if for_count >= 2 and against_count == 0:
+                hypothesis["status"] = "supported"
+            elif against_count >= 2 and for_count == 0:
+                hypothesis["status"] = "refuted"
+            elif for_count or against_count:
+                hypothesis["status"] = "partially_supported"
+
     def _build_source_context(self, sources: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """压缩网页正文，避免事实提取请求超过模型上下文或输出预算。"""
 
         context: list[dict[str, Any]] = []
         total_chars = 0
         for source in sources:
-            item = dict(source)
             original = str(
-                item.get("summary") or item.get("snippet") or item.get("content") or ""
+                source.get("summary") or source.get("snippet") or source.get("content") or ""
             ).strip()
             remaining = self.max_total_source_chars - total_chars
-            if remaining <= 0:
-                item["content"] = ""
-            else:
-                item["content"] = original[: min(self.max_source_chars, remaining)]
-                item["summary"] = item["content"]
-                total_chars += len(item["content"])
-            for key in ("title", "url", "source", "date", "query"):
-                item.setdefault(key, "")
+            summary = original[: min(self.max_source_chars, max(remaining, 0))]
+            total_chars += len(summary)
+            item = {
+                "title": str(source.get("title", "")).strip(),
+                "url": str(source.get("url", "")).strip(),
+                "source": str(source.get("source", "")).strip(),
+                "date": str(source.get("date", "")).strip(),
+                "query": str(source.get("query", "")).strip(),
+                "summary": summary,
+                "content": summary,
+            }
             context.append(item)
         return context
-
-    @staticmethod
-    def _compact_text(text: str, limit: int) -> str:
-        if len(text) <= limit:
-            return text
-        marker = "\n...[正文已截断，仍保留首尾内容]...\n"
-        available = max(limit - len(marker), 2)
-        head = (available + 1) // 2
-        tail = available - head
-        return text[:head] + marker + text[-tail:]
 
     @staticmethod
     def _validate_entities(value: Any) -> list[dict[str, Any]]:

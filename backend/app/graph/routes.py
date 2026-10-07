@@ -10,6 +10,19 @@ from app.agents.critic import CriticAgent
 from .state import GraphRoute, ResearchGraphState
 
 
+def select_research_batch_route(graph_state: ResearchGraphState) -> str:
+    """Continue initial search until every planned section has been researched."""
+
+    if graph_state.get("supplementary", False):
+        return "analyze"
+    state = graph_state["research_state"]
+    if any(section.get("status", "pending") == "pending" for section in state.outline):
+        return "search"
+    if state.pending_search_queries and state.iteration < state.max_iterations:
+        return "follow_up"
+    return "analyze"
+
+
 def prepare_review_route(graph_state: ResearchGraphState) -> dict[str, Any]:
     """把 Critic 结果转换成下一张图边。
 

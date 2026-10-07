@@ -98,6 +98,30 @@ class CriticAgentTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "不能低于 7"):
             asyncio.run(CriticAgent(LowScorePassClient()).run(state))
 
+    def test_critic_rejects_pass_with_unresolved_major_issue(self):
+        class MajorIssueClient(MockLLMClient):
+            async def complete_json(self, role, payload, system_prompt="", user_prompt=""):
+                result = await super().complete_json(role, payload, system_prompt, user_prompt)
+                if role == "critic":
+                    result["overall_assessment"]["verdict"] = "pass"
+                    result["overall_assessment"]["quality_score"] = 8.0
+                    result["issues"] = [{
+                        "id": "major-1",
+                        "issue_type": "missing_source",
+                        "severity": "major",
+                        "description": "缺少关键来源",
+                        "suggestion": "补充来源",
+                    }]
+                return result
+
+        state = ResearchState("测试问题")
+        state.final_report = "报告 https://example.com"
+        state.facts = [{"id": "fact-1", "content": "事实", "source_url": "https://example.com"}]
+        state.raw_sources = [{"title": "来源", "url": "https://example.com"}]
+
+        with self.assertRaisesRegex(ValueError, "不能存在未解决"):
+            asyncio.run(CriticAgent(MajorIssueClient()).run(state))
+
 
 if __name__ == "__main__":
     unittest.main()
