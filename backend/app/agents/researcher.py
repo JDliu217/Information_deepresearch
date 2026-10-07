@@ -53,12 +53,44 @@ class ResearcherAgent(BaseAgent):
         if supplementary is None:
             supplementary = bool(state.pending_search_queries)
         if supplementary:
-            tasks = [
-                {"query": query.strip(), "section_id": "", "section_title": "", "supplementary": True}
-                for query in state.pending_search_queries[: self.max_supplementary_queries]
-            ]
+            tasks = []
+            for query in state.pending_search_queries[: self.max_supplementary_queries]:
+                contexts = state.pending_search_contexts.get(query, [])
+                section_ids = list(
+                    dict.fromkeys(
+                        str(context.get("section_id", "")).strip()
+                        for context in contexts
+                        if str(context.get("section_id", "")).strip()
+                    )
+                )
+                section_titles = {
+                    str(context.get("section_id", "")).strip(): str(
+                        context.get("section_title", "")
+                    ).strip()
+                    for context in contexts
+                    if str(context.get("section_id", "")).strip()
+                }
+                tasks.append(
+                    {
+                        "query": query.strip(),
+                        "section_ids": section_ids,
+                        "section_titles": section_titles,
+                        "supplementary": True,
+                    }
+                )
         else:
-            tasks = self._build_search_tasks(state, max_sections=self.max_sections)
+            tasks = [
+                {
+                    **task,
+                    "section_ids": [task["section_id"]] if task["section_id"] else [],
+                    "section_titles": (
+                        {task["section_id"]: task["section_title"]}
+                        if task["section_id"]
+                        else {}
+                    ),
+                }
+                for task in self._build_search_tasks(state, max_sections=self.max_sections)
+            ]
         tasks = [task for task in tasks if task["query"]]
         if not tasks:
             if state.outline:
@@ -77,10 +109,14 @@ class ResearcherAgent(BaseAgent):
                 source.setdefault("summary", source.get("snippet", ""))
                 source.setdefault("source", "")
                 source.setdefault("date", "")
-                if task["section_id"]:
-                    source["section_id"] = task["section_id"]
-                    source["section_title"] = task["section_title"]
-                    source["section_ids"] = [task["section_id"]]
+                if task["section_ids"]:
+                    source["section_ids"] = task["section_ids"]
+                    if len(task["section_ids"]) == 1:
+                        section_id = task["section_ids"][0]
+                        source["section_id"] = section_id
+                        source["section_title"] = task["section_titles"].get(
+                            section_id, ""
+                        )
                 collected_sources.append(source)
 
         state.raw_sources = self._deduplicate_sources(collected_sources)
@@ -96,6 +132,7 @@ class ResearcherAgent(BaseAgent):
         ]
         if supplementary:
             state.pending_search_queries = []
+            state.pending_search_contexts = {}
         if not supplementary:
             researched_ids = {
                 task["section_id"] for task in tasks if task.get("section_id")
@@ -171,7 +208,11 @@ class ResearcherAgent(BaseAgent):
                 "section_ids",
                 [retained["section_id"]] if retained.get("section_id") else [],
             )
-            for section_id in source.get("section_ids", []):
+            source_section_ids = source.get("section_ids") or [source.get("section_id")]
+            for section_id in source_section_ids:
+                section_id = str(section_id or "").strip()
+                if not section_id:
+                    continue
                 if section_id not in section_ids:
                     section_ids.append(section_id)
             for field in ("summary", "snippet", "source", "date"):

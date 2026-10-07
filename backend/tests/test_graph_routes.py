@@ -101,6 +101,34 @@ class GraphRouteTests(unittest.TestCase):
             "follow_up",
         )
 
+    def test_critic_research_round_resets_recursive_search_depth(self):
+        state = ResearchState("测试问题", max_iterations=2)
+        state.iteration = 0
+        state.outline = [{"id": "sec-1", "title": "章节一", "status": "researching"}]
+        state.review_result = {
+            **review("needs_revision", more_research=True, search_queries=["更新数据"]),
+            "structured_issues": [
+                {
+                    "target_section": "sec-1",
+                    "search_query": "更新数据",
+                    "requires_new_search": True,
+                    "issue_type": "outdated",
+                    "severity": "major",
+                }
+            ],
+        }
+
+        result = prepare_review_route({
+            **initial_graph_state(state),
+            "research_depth": 2,
+        })
+
+        self.assertEqual(result["research_depth"], 0)
+        self.assertEqual(
+            result["research_state"].pending_search_contexts,
+            {"更新数据": [{"section_id": "sec-1", "section_title": "章节一"}]},
+        )
+
     def test_graph_loops_through_supplementary_research(self):
         llm = SequencedReviewLLM(
             [

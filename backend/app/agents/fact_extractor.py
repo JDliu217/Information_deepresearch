@@ -70,6 +70,7 @@ class FactExtractorAgent(BaseAgent):
         all_entities: list[dict[str, Any]] = []
         all_insights: list[str] = []
         follow_up_queries: list[str] = []
+        follow_up_contexts: dict[str, list[dict[str, str]]] = {}
         hypothesis_evidence: list[dict[str, Any]] = []
         analysis_notes: list[dict[str, Any]] = []
         for section_id, section_sources in sections:
@@ -113,8 +114,16 @@ class FactExtractorAgent(BaseAgent):
             all_facts.extend(facts)
             all_entities.extend(self._validate_entities(result.get("entities_discovered", [])))
             all_insights.extend(self._string_list(result.get("key_insights", [])))
-            follow_up_queries.extend(self._string_list(result.get("source_tracing_queries", [])))
-            follow_up_queries.extend(self._string_list(result.get("follow_up_queries", [])))
+            section_context = {
+                "section_id": section_id or "",
+                "section_title": str(payload["section"]["title"]),
+            }
+            for field_name in ("source_tracing_queries", "follow_up_queries"):
+                for query in self._string_list(result.get(field_name, [])):
+                    follow_up_queries.append(query)
+                    contexts = follow_up_contexts.setdefault(query, [])
+                    if section_context not in contexts:
+                        contexts.append(section_context)
             hypothesis_evidence.extend(self._validate_hypothesis_evidence(
                 result.get("hypothesis_evidence", []), state.hypotheses
             ))
@@ -132,9 +141,21 @@ class FactExtractorAgent(BaseAgent):
         self._apply_structured_hypothesis_evidence(state.hypotheses, hypothesis_evidence)
         self._update_knowledge_graph(state.knowledge_graph, all_entities)
         state.insights = list(dict.fromkeys([*state.insights, *all_insights]))
-        state.pending_search_queries = list(
+        pending_queries = list(
             dict.fromkeys([*state.pending_search_queries, *follow_up_queries])
         )[:5]
+        pending_contexts = dict(state.pending_search_contexts)
+        for query in pending_queries:
+            contexts = pending_contexts.setdefault(query, [])
+            for context in follow_up_contexts.get(query, []):
+                if context not in contexts:
+                    contexts.append(context)
+        state.pending_search_queries = pending_queries
+        state.pending_search_contexts = {
+            query: pending_contexts[query]
+            for query in pending_queries
+            if query in pending_contexts
+        }
         state.logs.extend(analysis_notes)
         for section_id, section_sources in sections:
             marker = section_id or "__unassigned__"

@@ -25,6 +25,7 @@ class ResearchGraphState(TypedDict, total=False):
     route: GraphRoute
     supplementary: bool
     revision: bool
+    research_depth: int
 
 
 def initial_graph_state(state: ResearchState) -> ResearchGraphState:
@@ -36,4 +37,5 @@ def initial_graph_state(state: ResearchState) -> ResearchGraphState:
         "route": "stop",
         "supplementary": False,
         "revision": False,
+        "research_depth": 0,
     }

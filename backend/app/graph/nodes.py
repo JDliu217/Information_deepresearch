@@ -126,7 +126,10 @@ class ResearchGraphNodes:
 
     @staticmethod
     def prepare_follow_up_research(graph_state: ResearchGraphState) -> dict[str, Any]:
-        return {"supplementary": True}
+        return {
+            "supplementary": True,
+            "research_depth": int(graph_state.get("research_depth", 0)) + 1,
+        }
 
     def analysis_started(self, graph_state: ResearchGraphState) -> dict[str, Any]:
         state = graph_state["research_state"]

@@ -38,6 +38,7 @@ class ResearchState:
         default_factory=lambda: {"nodes": [], "edges": []}
     )
     pending_search_queries: list[str] = field(default_factory=list)
+    pending_search_contexts: dict[str, list[dict[str, str]]] = field(default_factory=dict)
 
     # 研究证据
     # 原始搜索结果；事实提取和后续分析都从这里读取。
