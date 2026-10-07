@@ -10,7 +10,7 @@
 用户问题 -> 研究规划 -> 信息搜索 -> 证据整理 -> 数据分析 -> 报告撰写 -> 质量审核
 ```
 
-第一阶段只关注代码结构和数据流，不加入数据库、Docker、登录和复杂前端。
+早期迭代先关注代码结构和数据流；当前已经加入 PostgreSQL 持久化，Docker、登录和复杂前端仍放在后续迭代。
 
 ## 当前迭代
 
@@ -21,7 +21,8 @@
 - iteration-05：加入 CodeWizard、受限统计表达式执行、错误重试和代码执行记录。
 - iteration-06：完善章节级审核上下文、结构化 Critic 反馈、事实核查和审核路由。
 - iteration-07：使用 LangGraph 编排唯一的 V2 主工作流，保留原有事件流接口。
-- 后续迭代：加入检查点、本地知识库和简化前端。
+- iteration-08：加入 SQLAlchemy 持久化模型、Repository 和 Alembic 迁移，并接入 LangGraph runtime。
+- 后续迭代：加入 Redis、SSE、检查点、本地知识库、真实服务和简化前端。
 
 ## 学习方式
 
@@ -50,20 +51,25 @@ I6 的审核结果同时保留两种形式：`review_result["issues"]` 继续提
 重新执行研究阶段；只有逻辑表达、偏差或其他不需要新证据的问题时，才直接交给 Writer 修订。
 审核事件还会带出事实核查结果、遗漏方面、报告优点和未解决问题数量。
 
-工作流提供两种调用方式：
+`ResearchGraphRuntime` 提供两种调用方式：
 
-- `await workflow.run(...)`：等待整条链路结束，返回 `ResearchState`。
-- `async for event in workflow.stream(...)`：按阶段取得进度事件，最后收到完整结果。
+- `await runtime.run(...)`：等待整条链路结束，返回 `ResearchState`。
+- `async for event in runtime.stream(...)`：按阶段取得进度事件，最后收到完整结果。
 
 事件由 `backend/app/domain/events.py` 中的 `ResearchEvent` 统一转成普通字典，
 不依赖 Web 框架。当前可以在 Python 内部验证事件顺序；FastAPI 和 SSE 会在之后的步骤加入。
 
 从 I7 开始，节点编排由 `backend/app/graph/research_graph.py` 中的 LangGraph
-`StateGraph` 负责。`ResearchWorkflow` 仍然提供原来的 `run()` 和 `stream()` 方法，
-并把图节点更新转换为原来的研究事件，因此调用方不需要了解 LangGraph 的内部格式。
-LangGraph 负责流程和分支；Planner、Researcher、Writer、Critic 等 Agent 仍然是独立的
-业务组件。每个 Agent 节点显式写回 `ResearchState`，阶段开始事件在耗时 Agent 运行前发出。
-当前依赖版本写在 `backend/requirements.txt` 中；检查点、恢复和取消将在后续迭代接入。
+`StateGraph` 负责。I8 删除了 `ResearchWorkflow`，`ResearchGraphRuntime` 是唯一的
+V2 运行入口，并把图节点更新转换为对外研究事件，因此调用方不需要了解 LangGraph
+的内部格式。LangGraph 负责流程和分支；Planner、Researcher、Writer、Critic 等 Agent
+仍然是独立的业务组件。每个 Agent 节点显式写回 `ResearchState`，阶段开始事件在耗时
+Agent 运行前发出。
+
+I8 的 Repository 接在 runtime 和数据库之间：runtime 保存研究状态快照并追加事件，
+`ResearchRepository` 负责 SQLAlchemy 数据访问，Agent 不直接操作数据库。PostgreSQL
+表结构由 Alembic 迁移创建；本地测试使用 SQLite 验证相同的数据访问契约。检查点、
+恢复和取消将在后续迭代接入。
 
 事件类型包括 `research_started`、`phase_started`、`outline_ready`、
 `research_evidence_ready`、`analysis_ready`、`draft_ready`、`review_completed` 和 `research_completed`。
@@ -105,3 +111,20 @@ $env:PYTHONPATH = "backend"
 ```powershell
 .venv\Scripts\python.exe -m app.scripts.run_research
 ```
+
+## 数据库迁移
+
+默认数据库地址来自 `DATABASE_URL` 环境变量：
+
+```text
+postgresql+psycopg://postgres:postgres@localhost:5432/information_deepresearch
+```
+
+初始化或升级表结构：
+
+```powershell
+$env:PYTHONPATH = "backend"
+.venv\Scripts\python.exe -m alembic -c alembic.ini upgrade head
+```
+
+I8 的持久化对象是 `research_runs`（最新状态快照）和 `research_events`（按序事件记录）。
