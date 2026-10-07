@@ -13,8 +13,8 @@ from .state import GraphRoute, ResearchGraphState
 def prepare_review_route(graph_state: ResearchGraphState) -> dict[str, Any]:
     """把 Critic 结果转换成下一张图边。
 
-    这里保留旧 ``ResearchWorkflow`` 的循环语义：通过就结束，达到最大
-    迭代次数也结束；否则根据结构化审核结果决定补充搜索或直接修订。
+    通过就结束，达到最大迭代次数也结束；否则根据结构化审核结果决定
+    补充搜索或直接修订。
     """
 
     state = deepcopy(graph_state["research_state"])

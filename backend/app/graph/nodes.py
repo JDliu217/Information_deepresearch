@@ -27,8 +27,8 @@ from .state import ResearchGraphState
 class ResearchGraphNodes:
     """已有 Agent 的节点适配器。
 
-    ``ResearchWorkflow`` 创建 Agent 实例后，将它们传入这里。这样 I7
-    不会复制或重写任何 Agent 业务逻辑。
+    ``create_research_runtime`` 创建 Agent 实例后，将它们传入这里。这样
+    LangGraph 只负责编排，不会复制或重写任何 Agent 业务逻辑。
     """
 
     planner: PlannerAgent

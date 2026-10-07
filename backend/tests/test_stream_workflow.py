@@ -3,7 +3,7 @@ import unittest
 
 from app.core.llm_client import MockLLMClient
 from app.core.search_client import MockSearchClient
-from app.workflow.research_workflow import ResearchWorkflow
+from app.graph.runtime import create_research_runtime
 
 
 def review(verdict, *, more_research=False, issues=None, search_queries=None, score=5.0):
@@ -46,10 +46,10 @@ async def collect_events(workflow, query, session_id=None):
     ]
 
 
-class StreamWorkflowTests(unittest.TestCase):
+class GraphRuntimeStreamTests(unittest.TestCase):
     def test_phase_started_is_streamed_before_planner_finishes(self):
         llm = PausedPlannerLLM()
-        workflow = ResearchWorkflow(llm, MockSearchClient())
+        workflow = create_research_runtime(llm, MockSearchClient())
 
         async def inspect_stream():
             stream = workflow.stream("测试问题")
@@ -72,7 +72,7 @@ class StreamWorkflowTests(unittest.TestCase):
         asyncio.run(inspect_stream())
 
     def test_stream_emits_ordered_events_and_final_result(self):
-        workflow = ResearchWorkflow(MockLLMClient(), MockSearchClient())
+        workflow = create_research_runtime(MockLLMClient(), MockSearchClient())
 
         events = asyncio.run(
             collect_events(
@@ -138,7 +138,7 @@ class StreamWorkflowTests(unittest.TestCase):
                 review("pass", score=8.0),
             ]
         )
-        workflow = ResearchWorkflow(llm, MockSearchClient(), max_iterations=1)
+        workflow = create_research_runtime(llm, MockSearchClient(), max_iterations=1)
 
         events = asyncio.run(collect_events(workflow, "新能源汽车行业趋势"))
 

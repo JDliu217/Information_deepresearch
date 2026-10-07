@@ -8,7 +8,7 @@ import asyncio
 from app.core.llm_client import MockLLMClient
 from app.core.search_client import MockSearchClient
 from app.domain.state import ResearchState
-from app.workflow.research_workflow import ResearchWorkflow
+from app.graph.runtime import create_research_runtime
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -70,8 +70,8 @@ def print_state(state: ResearchState) -> None:
 
 
 async def run(query: str) -> ResearchState:
-    workflow = ResearchWorkflow(MockLLMClient(), MockSearchClient())
-    return await workflow.run(query)
+    runtime = create_research_runtime(MockLLMClient(), MockSearchClient())
+    return await runtime.run(query)
 
 
 def main() -> None:

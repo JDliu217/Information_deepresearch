@@ -3,7 +3,7 @@ import unittest
 
 from app.core.llm_client import MockLLMClient
 from app.core.search_client import MockSearchClient
-from app.workflow.research_workflow import ResearchWorkflow
+from app.graph.runtime import create_research_runtime
 
 
 def review(verdict, *, more_research=False, issues=None, search_queries=None, score=5.0):
@@ -61,9 +61,9 @@ class RecordingSearchClient(MockSearchClient):
         return await super().search(query, limit)
 
 
-class ResearchWorkflowTests(unittest.TestCase):
+class ResearchGraphRuntimeTests(unittest.TestCase):
     def test_workflow_runs_full_research_chain(self):
-        workflow = ResearchWorkflow(MockLLMClient(), MockSearchClient())
+        workflow = create_research_runtime(MockLLMClient(), MockSearchClient())
 
         state = asyncio.run(
             workflow.run("中国新能源汽车行业的发展趋势是什么？")
@@ -85,7 +85,7 @@ class ResearchWorkflowTests(unittest.TestCase):
         self.assertIn("## 代码分析", state.final_report)
 
     def test_workflow_preserves_explicit_session_id(self):
-        workflow = ResearchWorkflow(MockLLMClient(), MockSearchClient())
+        workflow = create_research_runtime(MockLLMClient(), MockSearchClient())
 
         state = asyncio.run(
             workflow.run("测试问题", session_id="session-001")
@@ -106,7 +106,7 @@ class ResearchWorkflowTests(unittest.TestCase):
             ]
         )
         search = RecordingSearchClient()
-        workflow = ResearchWorkflow(llm, search, max_iterations=1)
+        workflow = create_research_runtime(llm, search, max_iterations=1)
 
         state = asyncio.run(workflow.run("新能源汽车行业趋势"))
 
@@ -130,7 +130,7 @@ class ResearchWorkflowTests(unittest.TestCase):
             ]
         )
         search = RecordingSearchClient()
-        workflow = ResearchWorkflow(llm, search, max_iterations=1)
+        workflow = create_research_runtime(llm, search, max_iterations=1)
 
         state = asyncio.run(workflow.run("新能源汽车行业趋势"))
 
@@ -154,7 +154,7 @@ class ResearchWorkflowTests(unittest.TestCase):
                 review("needs_revision", issues=["仍需改进"], score=5.0),
             ]
         )
-        workflow = ResearchWorkflow(llm, MockSearchClient(), max_iterations=1)
+        workflow = create_research_runtime(llm, MockSearchClient(), max_iterations=1)
 
         state = asyncio.run(workflow.run("测试行业", session_id="bounded"))
 
@@ -172,7 +172,7 @@ class ResearchWorkflowTests(unittest.TestCase):
             [review("needs_revision", issues=["继续修订"])] * 4
             + [review("pass", score=8.0)]
         )
-        workflow = ResearchWorkflow(llm, MockSearchClient(), max_iterations=4)
+        workflow = create_research_runtime(llm, MockSearchClient(), max_iterations=4)
 
         state = asyncio.run(workflow.run("测试行业"))
 
@@ -188,7 +188,7 @@ class ResearchWorkflowTests(unittest.TestCase):
             ]
         )
         search = RecordingSearchClient()
-        workflow = ResearchWorkflow(llm, search, max_iterations=1)
+        workflow = create_research_runtime(llm, search, max_iterations=1)
 
         asyncio.run(workflow.run("新能源汽车行业趋势"))
 
@@ -196,7 +196,7 @@ class ResearchWorkflowTests(unittest.TestCase):
 
     def test_workflow_rejects_negative_iteration_limit(self):
         with self.assertRaisesRegex(ValueError, "max_iterations"):
-            ResearchWorkflow(MockLLMClient(), MockSearchClient(), max_iterations=-1)
+            create_research_runtime(MockLLMClient(), MockSearchClient(), max_iterations=-1)
 
 
 if __name__ == "__main__":
