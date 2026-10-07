@@ -95,11 +95,12 @@ class CapturingFactClient(LLMClient):
         self.payload = payload
         source = payload["sources"][0]
         return {
-            "facts": [
+            "extracted_facts": [
                 {
                     "content": "压缩正文中的事实。",
+                    "source_name": source.get("source", "来源"),
                     "source_url": source["url"],
-                    "confidence": 0.8,
+                    "credibility_score": 0.8,
                 }
             ]
         }
@@ -109,6 +110,61 @@ class CapturingFactClient(LLMClient):
 
 
 class FactExtractorAgentTests(unittest.TestCase):
+    def test_fact_extractor_calls_once_per_section_with_reference_limits(self):
+        class CapturingClient(LLMClient):
+            def __init__(self):
+                self.payloads = []
+
+            async def complete_json(self, role, payload):
+                self.payloads.append(payload)
+                sources = payload["sources"]
+                return {
+                    "extracted_facts": [
+                        {
+                            "content": f"事实来自 {sources[0]['title']}",
+                            "source_name": sources[0]["source"],
+                            "source_url": sources[0]["url"],
+                            "credibility_score": 0.8,
+                        }
+                    ]
+                }
+
+            async def complete_text(self, role, payload):
+                return ""
+
+        async def run():
+            client = CapturingClient()
+            state = ResearchState("测试问题")
+            state.outline = [
+                {"id": "sec-a", "title": "章节 A", "description": "A 描述"},
+                {"id": "sec-b", "title": "章节 B", "description": "B 描述"},
+            ]
+            state.raw_sources = [
+                {
+                    "title": f"来源 {index}",
+                    "url": f"https://example.com/{index}",
+                    "source": "测试站点",
+                    "date": "2025-01-01",
+                    "summary": "摘要内容" * 100,
+                    "section_id": "sec-a" if index < 20 else "sec-b",
+                    "section_title": "章节 A" if index < 20 else "章节 B",
+                }
+                for index in range(1, 22)
+            ]
+            await FactExtractorAgent(client).run(state)
+            return state, client
+
+        state, client = asyncio.run(run())
+
+        self.assertEqual(len(client.payloads), 2)
+        self.assertEqual([len(item["sources"]) for item in client.payloads], [15, 2])
+        self.assertTrue(
+            all(len(source["content"]) <= 300 for item in client.payloads for source in item["sources"])
+        )
+        self.assertEqual([item["section"]["id"] for item in client.payloads], ["sec-a", "sec-b"])
+        self.assertEqual(len(state.facts), 2)
+        self.assertEqual({fact["section_id"] for fact in state.facts}, {"sec-a", "sec-b"})
+
     def test_fact_extractor_compacts_large_source_context(self):
         client = CapturingFactClient()
         state = ResearchState("测试问题")
@@ -124,7 +180,8 @@ class FactExtractorAgentTests(unittest.TestCase):
 
         sent_content = client.payload["sources"][0]["content"]
         self.assertLessEqual(len(sent_content), FactExtractorAgent.default_max_source_chars)
-        self.assertIn("正文已截断", sent_content)
+        self.assertEqual(len(sent_content), FactExtractorAgent.default_max_source_chars)
+        self.assertTrue(sent_content.startswith("前文"))
         self.assertGreater(len(state.raw_sources[0]["content"]), len(sent_content))
 
     def test_fact_extractor_turns_raw_sources_into_facts(self):

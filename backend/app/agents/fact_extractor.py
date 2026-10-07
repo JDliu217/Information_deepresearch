@@ -35,7 +35,8 @@ class FactExtractorAgent(BaseAgent):
 具体到章节、时间、指标或权威机构，避免重复已有查询。"""
     # 原项目的常规搜索分析只发送每条摘要的前 300 字。
     default_max_source_chars = 300
-    default_max_total_source_chars = 60_000
+    default_max_sources_per_section = 15
+    default_max_total_source_chars = 4_500
 
     def __init__(
         self,
@@ -43,42 +44,123 @@ class FactExtractorAgent(BaseAgent):
         *,
         max_source_chars: int = default_max_source_chars,
         max_total_source_chars: int = default_max_total_source_chars,
+        max_sources_per_section: int = default_max_sources_per_section,
     ):
         if max_source_chars < 100:
             raise ValueError("max_source_chars 不能小于 100")
         if max_total_source_chars < max_source_chars:
             raise ValueError("max_total_source_chars 不能小于 max_source_chars")
+        if max_sources_per_section < 1:
+            raise ValueError("max_sources_per_section 必须大于 0")
         self.llm = llm
         self.max_source_chars = max_source_chars
         self.max_total_source_chars = max_total_source_chars
+        self.max_sources_per_section = max_sources_per_section
 
     async def run(self, state: ResearchState) -> ResearchState:
         if not state.raw_sources:
             raise ValueError("没有可供事实提取的来源")
 
-        payload = {
-            "query": state.query,
-            "sources": self._build_source_context(state.raw_sources),
-            "hypotheses": state.hypotheses,
-            "instruction": "只提取来源正文中明确表达、且可以由同一 URL 支撑的事实；如果事实与某个研究假设相关，请标记关联假设和支持方向。",
-        }
-        result = await self._complete_json(
-            payload,
-            system_prompt=self.SEARCH_ANALYSIS_SYSTEM,
-            user_prompt=self._render_prompt(self.SEARCH_ANALYSIS_PROMPT, payload),
-        )
-        facts = self._validate_facts(
-            result.get("facts"),
-            state.raw_sources,
-            state.hypotheses,
-        )
-        entities = self._validate_entities(result.get("entities_discovered", []))
-        state.facts = self._deduplicate_facts(state.facts + facts)
-        self._append_data_points(state.data_points, facts)
-        self._apply_hypothesis_evidence(state.hypotheses, facts)
-        self._update_knowledge_graph(state.knowledge_graph, entities)
+        sections = self._sources_by_section(state.raw_sources)
+        if not sections:
+            sections = [(None, state.raw_sources)]
+
+        all_facts: list[dict[str, Any]] = []
+        all_entities: list[dict[str, Any]] = []
+        all_insights: list[str] = []
+        follow_up_queries: list[str] = []
+        for section_id, section_sources in sections:
+            section = next(
+                (
+                    item
+                    for item in state.outline
+                    if str(item.get("id", "")).strip() == section_id
+                ),
+                {},
+            )
+            source_context = self._build_source_context(
+                section_sources[: self.max_sources_per_section]
+            )
+            payload = {
+                "query": state.query,
+                "section": {
+                    "id": section_id,
+                    "title": section.get("title") or section_sources[0].get("section_title", ""),
+                    "description": section.get("description", ""),
+                },
+                "sources": source_context,
+                "hypotheses": state.hypotheses,
+                "instruction": "只提取来源摘要中明确表达、且可以由同一 URL 支撑的事实；如果事实与研究假设相关，请标记关联假设和支持方向。",
+            }
+            result = await self._complete_json(
+                payload,
+                system_prompt=self.SEARCH_ANALYSIS_SYSTEM,
+                user_prompt=self._render_prompt(self.SEARCH_ANALYSIS_PROMPT, payload),
+            )
+            raw_facts = self._normalize_extracted_facts(result)
+            facts = self._validate_facts(
+                raw_facts,
+                section_sources[: self.max_sources_per_section],
+                state.hypotheses,
+            )
+            all_facts.extend(facts)
+            all_entities.extend(self._validate_entities(result.get("entities_discovered", [])))
+            all_insights.extend(self._string_list(result.get("key_insights", [])))
+            follow_up_queries.extend(self._string_list(result.get("follow_up_queries", [])))
+
+        all_facts = self._deduplicate_facts(all_facts)
+        state.facts = self._deduplicate_facts(state.facts + all_facts)
+        self._append_data_points(state.data_points, all_facts)
+        self._apply_hypothesis_evidence(state.hypotheses, all_facts)
+        self._update_knowledge_graph(state.knowledge_graph, all_entities)
+        state.insights = list(dict.fromkeys([*state.insights, *all_insights]))
+        state.pending_search_queries = list(
+            dict.fromkeys([*state.pending_search_queries, *follow_up_queries])
+        )[:5]
         state.phase = "researching"
         return state
+
+    @staticmethod
+    def _sources_by_section(
+        sources: list[dict[str, Any]],
+    ) -> list[tuple[str | None, list[dict[str, Any]]]]:
+        grouped: dict[str | None, list[dict[str, Any]]] = {}
+        for source in sources:
+            section_id = str(source.get("section_id", "")).strip() or None
+            grouped.setdefault(section_id, []).append(source)
+        return list(grouped.items())
+
+    @staticmethod
+    def _normalize_extracted_facts(result: dict[str, Any]) -> list[dict[str, Any]]:
+        """Map the reference DeepScout response to the local fact contract."""
+
+        facts = result.get("facts")
+        if facts is None:
+            extracted = result.get("extracted_facts", [])
+            if not isinstance(extracted, list):
+                raise ValueError("FactExtractor 返回的 extracted_facts 必须是列表")
+            facts = []
+            for item in extracted:
+                if not isinstance(item, dict):
+                    raise ValueError("FactExtractor extracted_facts 元素必须是对象")
+                facts.append(
+                    {
+                        **item,
+                        "source_title": item.get("source_title") or item.get("source_name", ""),
+                        "confidence": item.get("confidence", item.get("credibility_score", 0.5)),
+                    }
+                )
+        if not isinstance(facts, list):
+            raise ValueError("FactExtractor 返回的 facts 必须是列表")
+        return facts
+
+    @staticmethod
+    def _string_list(value: Any) -> list[str]:
+        if value is None:
+            return []
+        if not isinstance(value, list):
+            return []
+        return list(dict.fromkeys(str(item).strip() for item in value if str(item).strip()))
 
     def _build_source_context(self, sources: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """压缩网页正文，避免事实提取请求超过模型上下文或输出预算。"""
@@ -87,16 +169,18 @@ class FactExtractorAgent(BaseAgent):
         total_chars = 0
         for source in sources:
             item = dict(source)
-            original = str(item.get("content") or item.get("snippet") or "").strip()
+            original = str(
+                item.get("summary") or item.get("snippet") or item.get("content") or ""
+            ).strip()
             remaining = self.max_total_source_chars - total_chars
             if remaining <= 0:
                 item["content"] = ""
             else:
-                item["content"] = self._compact_text(
-                    original,
-                    min(self.max_source_chars, remaining),
-                )
+                item["content"] = original[: min(self.max_source_chars, remaining)]
+                item["summary"] = item["content"]
                 total_chars += len(item["content"])
+            for key in ("title", "url", "source", "date", "query"):
+                item.setdefault(key, "")
             context.append(item)
         return context
 

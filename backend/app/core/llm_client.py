@@ -121,6 +121,14 @@ class MockLLMClient(LLMClient):
             query = str(payload.get("query", "")).strip() or "研究对象"
             return {
                 "facts": facts,
+                "extracted_facts": [
+                    {
+                        **fact,
+                        "source_name": fact["source_title"],
+                        "credibility_score": fact["confidence"],
+                    }
+                    for fact in facts
+                ],
                 "entities_discovered": [
                     {
                         "name": query,
@@ -130,6 +138,11 @@ class MockLLMClient(LLMClient):
                     {"name": "政策环境", "type": "policy", "relations": []},
                     {"name": "市场需求", "type": "market", "relations": []},
                 ],
+                "key_insights": [],
+                "follow_up_queries": [],
+                "source_tracing_queries": [],
+                "missing_info": [],
+                "source_quality_assessment": "Mock 搜索结果仅用于测试数据流。",
             }
 
         if role == "data_analyst":
