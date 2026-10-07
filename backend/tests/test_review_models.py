@@ -29,7 +29,8 @@ class ReviewModelTests(unittest.TestCase):
             verdict="needs_revision",
             quality_score=6.5,
             summary="需要补充数据来源",
-            issues=[{"id": "issue-1", "severity": "major"}],
+            issues=["市场规模缺少来源"],
+            structured_issues=[{"id": "issue-1", "severity": "major"}],
             fact_check_results=[
                 FactCheckResult(
                     fact_id="fact-1",
@@ -46,6 +47,8 @@ class ReviewModelTests(unittest.TestCase):
         serialized = result.to_dict()
 
         self.assertEqual(serialized["quality_score"], 6.5)
+        self.assertEqual(serialized["issues"], ["市场规模缺少来源"])
+        self.assertEqual(serialized["structured_issues"][0]["id"], "issue-1")
         self.assertEqual(serialized["fact_check_results"][0]["status"], "suspicious")
         self.assertEqual(serialized["search_queries"], ["行业区域差异 数据"])
 

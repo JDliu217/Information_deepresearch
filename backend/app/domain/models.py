@@ -170,7 +170,8 @@ class ReviewResult:
     verdict: ReviewVerdict
     quality_score: float
     summary: str = ""
-    issues: list[dict[str, Any]] = field(default_factory=list)
+    issues: list[str] = field(default_factory=list)
+    structured_issues: list[dict[str, Any]] = field(default_factory=list)
     fact_check_results: list[dict[str, Any]] = field(default_factory=list)
     missing_aspects: list[str] = field(default_factory=list)
     strengths: list[str] = field(default_factory=list)

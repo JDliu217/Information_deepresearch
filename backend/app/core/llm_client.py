@@ -203,12 +203,38 @@ class MockLLMClient(LLMClient):
 
             passed = bool(facts and sources and "http" in report)
             return {
+                "overall_assessment": {
+                    "verdict": "pass" if passed else "needs_revision",
+                    "quality_score": 8.0 if passed else 4.0,
+                    "summary": "报告中的事实都关联了来源。" if passed else "报告缺少足够的可验证证据。",
+                },
                 "verdict": "pass" if passed else "needs_revision",
                 "quality_score": 8.0 if passed else 4.0,
                 "summary": "报告中的事实都关联了来源。" if passed else "报告缺少足够的可验证证据。",
                 "needs_more_research": not passed,
-                "issues": [] if passed else ["需要补充带来源的事实"],
+                "issues": [] if passed else [{
+                    "id": "issue_1",
+                    "target_section": "global",
+                    "issue_type": "missing_source",
+                    "severity": "major",
+                    "location": "报告正文",
+                    "description": "需要补充带来源的事实",
+                    "evidence": "报告没有足够的来源链接",
+                    "suggestion": "补充权威来源并在正文中引用",
+                    "requires_new_search": True,
+                    "search_query": "补充权威来源和数据",
+                }],
                 "search_queries": [] if passed else ["补充权威来源和数据"],
+                "fact_check_results": [
+                    {
+                        "fact_id": str(fact.get("id", f"fact_{index}")),
+                        "status": "verified" if passed else "unverified",
+                        "reason": "事实关联了来源" if passed else "需要进一步核查来源",
+                    }
+                    for index, fact in enumerate(facts, start=1)
+                ],
+                "missing_aspects": [] if passed else ["权威数据来源"],
+                "strengths": ["报告包含研究问题和引用"] if passed else [],
             }
 
         raise ValueError(f"MockLLMClient 暂时不支持角色: {role}")
