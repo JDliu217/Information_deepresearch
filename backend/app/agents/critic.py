@@ -51,6 +51,42 @@ class CriticAgent(BaseAgent):
         return state
 
     @staticmethod
+    def route_review(review: dict[str, Any]) -> dict[str, Any]:
+        """把审核问题转换成工作流可执行的下一步。"""
+        structured_issues = review.get("structured_issues", [])
+        queries = [
+            str(query).strip()
+            for query in review.get("search_queries", [])
+            if isinstance(query, str) and query.strip()
+        ]
+        for issue in structured_issues:
+            if not isinstance(issue, dict):
+                continue
+            query = str(issue.get("search_query", "")).strip()
+            if issue.get("requires_new_search") and query:
+                queries.append(query)
+        for aspect in review.get("missing_aspects", []):
+            if isinstance(aspect, str) and aspect.strip():
+                queries.append(aspect.strip())
+
+        unique_queries = list(dict.fromkeys(queries))[:5]
+        research_issue_types = {"missing_source", "incomplete", "outdated"}
+        should_research = bool(unique_queries) and any(
+            issue.get("issue_type") in research_issue_types
+            and issue.get("severity") in {"critical", "major"}
+            for issue in structured_issues
+            if isinstance(issue, dict)
+        )
+        if review.get("missing_aspects") and unique_queries:
+            should_research = True
+
+        return {
+            "action": "research" if should_research else "revise",
+            "should_research": should_research,
+            "search_queries": unique_queries,
+        }
+
+    @staticmethod
     def _build_review_context(state: ResearchState) -> dict[str, Any]:
         """按章节整理审核输入，避免 Critic 只看到一整段报告。"""
         sections = []
