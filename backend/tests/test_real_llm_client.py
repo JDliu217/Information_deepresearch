@@ -3,7 +3,7 @@ import unittest
 from types import SimpleNamespace
 
 from app.core.llm_config import AgentModelSettings, LLMSettings
-from app.core.openai_llm_client import OpenAICompatibleLLMClient
+from app.core.openai_llm_client import LLMInvocationError, OpenAICompatibleLLMClient
 
 
 class FakeCompletions:
@@ -24,13 +24,38 @@ class FakeClient:
         self.chat = SimpleNamespace(completions=FakeCompletions(contents))
 
 
+class FailingCompletions:
+    def __init__(self, error):
+        self.error = error
+        self.requests = []
+
+    async def create(self, **request):
+        self.requests.append(request)
+        raise self.error
+
+
+class FailingClient:
+    def __init__(self, error):
+        self.chat = SimpleNamespace(completions=FailingCompletions(error))
+
+
+class ProviderError(Exception):
+    status_code = 400
+
+    def __init__(self, message, body):
+        super().__init__(message)
+        self.body = body
+
+
 class RealLLMClientTests(unittest.TestCase):
     def settings(self, **kwargs):
         agents = {
             "planner": AgentModelSettings("test-model", 0.2, 1000),
             "writer": AgentModelSettings("writer-model", 0.6, 2000),
         }
-        return LLMSettings(api_key="test-key", agents=agents, **kwargs)
+        values = {"api_key": "test-key", "agents": agents}
+        values.update(kwargs)
+        return LLMSettings(**values)
 
     def test_complete_json_sends_high_quality_structured_prompt(self):
         fake = FakeClient(['{"outline": [], "research_questions": [], "hypotheses": [], "key_entities": []}'])
@@ -61,10 +86,30 @@ class RealLLMClientTests(unittest.TestCase):
         settings = self.settings(max_retries=1)
         client = OpenAICompatibleLLMClient(settings, client=fake)
 
-        with self.assertRaises(RuntimeError):
+        with self.assertRaises(LLMInvocationError) as context:
             asyncio.run(client.complete_json("planner", {"query": "测试"}))
 
         self.assertEqual(len(fake.chat.completions.requests), 2)
+        self.assertEqual(context.exception.category, "invalid_json")
+        self.assertEqual(context.exception.attempts, 2)
+        self.assertIn("真实 LLM 调用失败", str(context.exception))
+
+    def test_provider_error_keeps_status_and_redacts_api_key(self):
+        error = ProviderError(
+            "provider rejected sk-secret-key",
+            {"error": {"message": "response_format is not supported"}},
+        )
+        fake = FailingClient(error)
+        settings = self.settings(api_key="sk-secret-key", max_retries=0)
+        client = OpenAICompatibleLLMClient(settings, client=fake)
+
+        with self.assertRaises(LLMInvocationError) as context:
+            asyncio.run(client.complete_json("planner", {"query": "测试"}))
+
+        self.assertEqual(context.exception.category, "provider_4xx")
+        self.assertIn("http_status=400", str(context.exception))
+        self.assertIn("response_format is not supported", str(context.exception))
+        self.assertNotIn("sk-secret-key", str(context.exception))
 
 
 if __name__ == "__main__":

@@ -13,6 +13,30 @@ from .llm_client import LLMClient
 from .llm_config import LLMSettings
 
 
+class LLMInvocationError(RuntimeError):
+    """真实 LLM 请求失败时提供可诊断、已脱敏的错误。"""
+
+    def __init__(
+        self,
+        *,
+        role: str,
+        model: str,
+        category: str,
+        attempts: int,
+        detail: str,
+    ) -> None:
+        self.role = role
+        self.model = model
+        self.category = category
+        self.attempts = attempts
+        self.detail = detail
+        super().__init__(
+            "真实 LLM 调用失败: "
+            f"role={role}, model={model}, category={category}, "
+            f"attempts={attempts}, detail={detail}"
+        )
+
+
 class OpenAICompatibleLLMClient(LLMClient):
     """调用 DashScope、DeepSeek、OpenAI 等 OpenAI 兼容服务。"""
 
@@ -75,7 +99,9 @@ class OpenAICompatibleLLMClient(LLMClient):
             request["response_format"] = {"type": "json_object"}
 
         last_error: Exception | None = None
+        attempts = 0
         for attempt in range(self.settings.max_retries + 1):
+            attempts = attempt + 1
             try:
                 response = await self._get_client().chat.completions.create(**request)
                 content = self._response_content(response)
@@ -89,7 +115,14 @@ class OpenAICompatibleLLMClient(LLMClient):
                 if attempt >= self.settings.max_retries:
                     break
                 await asyncio.sleep(min(2**attempt, 4))
-        raise RuntimeError(f"真实 LLM 调用失败: role={role}") from last_error
+        assert last_error is not None
+        raise LLMInvocationError(
+            role=role,
+            model=model_settings.model,
+            category=self._classify_error(last_error),
+            attempts=attempts,
+            detail=self._safe_error_detail(last_error),
+        ) from last_error
 
     def _get_client(self) -> Any:
         if self.client is None:
@@ -104,6 +137,58 @@ class OpenAICompatibleLLMClient(LLMClient):
                 max_retries=0,
             )
         return self.client
+
+    @staticmethod
+    def _classify_error(error: Exception) -> str:
+        """把常见服务商错误归类，便于定位配置或请求问题。"""
+
+        status_code = getattr(error, "status_code", None)
+        if isinstance(status_code, int):
+            if status_code == 429:
+                return "rate_limit"
+            if 400 <= status_code < 500:
+                return "provider_4xx"
+            if status_code >= 500:
+                return "provider_5xx"
+
+        error_name = type(error).__name__.lower()
+        error_text = str(error).lower()
+        if "timeout" in error_name or "timeout" in error_text:
+            return "timeout"
+        if "connection" in error_name or "connect" in error_text:
+            return "connection"
+        if isinstance(error, ValueError):
+            if "json" in error_text:
+                return "invalid_json"
+            return "invalid_response"
+        return "unknown"
+
+    def _safe_error_detail(self, error: Exception) -> str:
+        """提取短错误摘要，避免把密钥或大段响应写入运行状态。"""
+
+        detail = ""
+        body = getattr(error, "body", None)
+        if isinstance(body, dict):
+            provider_error = body.get("error", body)
+            if isinstance(provider_error, dict):
+                detail = str(
+                    provider_error.get("message")
+                    or provider_error.get("code")
+                    or provider_error.get("type")
+                    or ""
+                )
+            elif provider_error:
+                detail = str(provider_error)
+        if not detail:
+            detail = str(error).strip() or type(error).__name__
+
+        status_code = getattr(error, "status_code", None)
+        if isinstance(status_code, int):
+            detail = f"http_status={status_code}; {detail}"
+        if self.settings.api_key:
+            detail = detail.replace(self.settings.api_key, "[redacted-api-key]")
+        detail = " ".join(detail.split())
+        return detail[:500]
 
     @staticmethod
     def _response_content(response: Any) -> str:
@@ -147,4 +232,4 @@ class OpenAICompatibleLLMClient(LLMClient):
         return None
 
 
-__all__ = ["OpenAICompatibleLLMClient"]
+__all__ = ["LLMInvocationError", "OpenAICompatibleLLMClient"]
