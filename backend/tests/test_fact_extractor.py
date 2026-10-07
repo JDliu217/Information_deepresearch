@@ -87,7 +87,46 @@ class EntityFactClient(LLMClient):
         return ""
 
 
+class CapturingFactClient(LLMClient):
+    def __init__(self):
+        self.payload = None
+
+    async def complete_json(self, role, payload):
+        self.payload = payload
+        source = payload["sources"][0]
+        return {
+            "facts": [
+                {
+                    "content": "压缩正文中的事实。",
+                    "source_url": source["url"],
+                    "confidence": 0.8,
+                }
+            ]
+        }
+
+    async def complete_text(self, role, payload):
+        return ""
+
+
 class FactExtractorAgentTests(unittest.TestCase):
+    def test_fact_extractor_compacts_large_source_context(self):
+        client = CapturingFactClient()
+        state = ResearchState("测试问题")
+        state.raw_sources = [
+            {
+                "title": "长正文",
+                "url": "https://example.com/long",
+                "content": "前文" * 6_000,
+            }
+        ]
+
+        asyncio.run(FactExtractorAgent(client).run(state))
+
+        sent_content = client.payload["sources"][0]["content"]
+        self.assertLessEqual(len(sent_content), FactExtractorAgent.default_max_source_chars)
+        self.assertIn("正文已截断", sent_content)
+        self.assertGreater(len(state.raw_sources[0]["content"]), len(sent_content))
+
     def test_fact_extractor_turns_raw_sources_into_facts(self):
         async def run_chain():
             state = ResearchState("中国新能源汽车行业的发展趋势是什么？")

@@ -15,9 +15,23 @@ class FactExtractorAgent(BaseAgent):
     """把网页来源转换成报告可以引用的事实。"""
 
     name = "fact_extractor"
+    default_max_source_chars = 8_000
+    default_max_total_source_chars = 60_000
 
-    def __init__(self, llm: LLMClient):
+    def __init__(
+        self,
+        llm: LLMClient,
+        *,
+        max_source_chars: int = default_max_source_chars,
+        max_total_source_chars: int = default_max_total_source_chars,
+    ):
+        if max_source_chars < 500:
+            raise ValueError("max_source_chars 不能小于 500")
+        if max_total_source_chars < max_source_chars:
+            raise ValueError("max_total_source_chars 不能小于 max_source_chars")
         self.llm = llm
+        self.max_source_chars = max_source_chars
+        self.max_total_source_chars = max_total_source_chars
 
     async def run(self, state: ResearchState) -> ResearchState:
         if not state.raw_sources:
@@ -27,7 +41,7 @@ class FactExtractorAgent(BaseAgent):
             role=self.name,
             payload={
                 "query": state.query,
-                "sources": state.raw_sources,
+                "sources": self._build_source_context(state.raw_sources),
                 "hypotheses": state.hypotheses,
                 "instruction": "只提取来源正文中明确表达、且可以由同一 URL 支撑的事实；如果事实与某个研究假设相关，请标记关联假设和支持方向。",
             },
@@ -44,6 +58,36 @@ class FactExtractorAgent(BaseAgent):
         self._update_knowledge_graph(state.knowledge_graph, entities)
         state.phase = "researching"
         return state
+
+    def _build_source_context(self, sources: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """压缩网页正文，避免事实提取请求超过模型上下文或输出预算。"""
+
+        context: list[dict[str, Any]] = []
+        total_chars = 0
+        for source in sources:
+            item = dict(source)
+            original = str(item.get("content") or item.get("snippet") or "").strip()
+            remaining = self.max_total_source_chars - total_chars
+            if remaining <= 0:
+                item["content"] = ""
+            else:
+                item["content"] = self._compact_text(
+                    original,
+                    min(self.max_source_chars, remaining),
+                )
+                total_chars += len(item["content"])
+            context.append(item)
+        return context
+
+    @staticmethod
+    def _compact_text(text: str, limit: int) -> str:
+        if len(text) <= limit:
+            return text
+        marker = "\n...[正文已截断，仍保留首尾内容]...\n"
+        available = max(limit - len(marker), 2)
+        head = (available + 1) // 2
+        tail = available - head
+        return text[:head] + marker + text[-tail:]
 
     @staticmethod
     def _validate_entities(value: Any) -> list[dict[str, Any]]:

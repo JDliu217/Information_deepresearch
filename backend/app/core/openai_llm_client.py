@@ -195,15 +195,26 @@ class OpenAICompatibleLLMClient(LLMClient):
         choices = getattr(response, "choices", None)
         if not choices:
             raise ValueError("LLM 响应缺少 choices")
-        message = getattr(choices[0], "message", None)
+        choice = choices[0]
+        message = getattr(choice, "message", None)
         content = getattr(message, "content", None)
         if isinstance(content, list):
             content = "".join(
                 str(item.get("text", "")) if isinstance(item, dict) else str(item)
                 for item in content
             )
-        if not isinstance(content, str):
-            raise ValueError("LLM 响应缺少文本 content")
+        finish_reason = getattr(choice, "finish_reason", None)
+        reasoning_content = getattr(message, "reasoning_content", None)
+        reasoning_chars = len(reasoning_content) if isinstance(reasoning_content, str) else 0
+        refusal = getattr(message, "refusal", None)
+        if not isinstance(content, str) or not content.strip():
+            detail = (
+                "LLM 响应 content 为空或无效; "
+                f"finish_reason={finish_reason!r}; "
+                f"reasoning_chars={reasoning_chars}; "
+                f"refusal={str(refusal)[:120]!r}"
+            )
+            raise ValueError(detail)
         return content.strip()
 
     @classmethod

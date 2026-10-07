@@ -39,6 +39,27 @@ class FailingClient:
         self.chat = SimpleNamespace(completions=FailingCompletions(error))
 
 
+class EmptyResponseCompletions:
+    async def create(self, **request):
+        return SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    finish_reason="length",
+                    message=SimpleNamespace(
+                        content="",
+                        reasoning_content="思考过程" * 10,
+                        refusal=None,
+                    ),
+                )
+            ]
+        )
+
+
+class EmptyResponseClient:
+    def __init__(self):
+        self.chat = SimpleNamespace(completions=EmptyResponseCompletions())
+
+
 class ProviderError(Exception):
     status_code = 400
 
@@ -110,6 +131,19 @@ class RealLLMClientTests(unittest.TestCase):
         self.assertIn("http_status=400", str(context.exception))
         self.assertIn("response_format is not supported", str(context.exception))
         self.assertNotIn("sk-secret-key", str(context.exception))
+
+    def test_empty_response_reports_finish_reason_and_reasoning_size(self):
+        client = OpenAICompatibleLLMClient(
+            self.settings(max_retries=0),
+            client=EmptyResponseClient(),
+        )
+
+        with self.assertRaises(LLMInvocationError) as context:
+            asyncio.run(client.complete_json("planner", {"query": "测试"}))
+
+        self.assertEqual(context.exception.category, "invalid_response")
+        self.assertIn("finish_reason='length'", str(context.exception))
+        self.assertIn("reasoning_chars=40", str(context.exception))
 
 
 if __name__ == "__main__":
