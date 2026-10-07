@@ -13,8 +13,6 @@ from .state import GraphRoute, ResearchGraphState
 def select_research_batch_route(graph_state: ResearchGraphState) -> str:
     """Continue initial search until every planned section has been researched."""
 
-    if graph_state.get("supplementary", False):
-        return "analyze"
     state = graph_state["research_state"]
     if any(section.get("status", "pending") == "pending" for section in state.outline):
         return "search"
@@ -71,3 +69,4 @@ def select_review_route(graph_state: ResearchGraphState) -> GraphRoute:
     """返回 LangGraph 条件边使用的路由名称。"""
 
     return graph_state.get("route", "stop")
+

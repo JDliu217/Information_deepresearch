@@ -87,7 +87,7 @@ class GraphRouteTests(unittest.TestCase):
         self.assertEqual(result["route"], "stop")
         self.assertEqual(state.iteration, 1)
 
-    def test_graph_loops_through_supplementary_research(self):
+    def test_follow_up_queries_are_researched_before_analysis(self):\n        state = ResearchState("测试问题", max_iterations=2)\n        state.outline = [{"id": "sec-1", "status": "researching"}]\n        state.pending_search_queries = ["追溯来源"]\n\n        from app.graph.routes import select_research_batch_route\n        self.assertEqual(select_research_batch_route({"research_state": state, "supplementary": True}), "follow_up")\n\n    def test_graph_loops_through_supplementary_research(self):
         llm = SequencedReviewLLM(
             [
                 review(
@@ -119,3 +119,4 @@ class GraphRouteTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
