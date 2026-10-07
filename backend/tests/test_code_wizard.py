@@ -42,6 +42,19 @@ class RepairingCodeWizardClient(MockLLMClient):
         return await super().complete_json(role, payload)
 
 
+class AlwaysFailingCodeWizardClient(LLMClient):
+    async def complete_json(self, role, payload):
+        return {
+            "purpose": "统计数据点",
+            "code": "result = {'count': 1 / 0}",
+            "expected_outputs": ["count"],
+            "chart_ids": [],
+        }
+
+    async def complete_text(self, role, payload):
+        return ""
+
+
 class CodeWizardAgentTests(unittest.TestCase):
     def test_code_wizard_executes_generated_plan_and_records_result(self):
         async def run():
@@ -108,6 +121,16 @@ class CodeWizardAgentTests(unittest.TestCase):
 
         self.assertEqual([item["status"] for item in state.code_executions], ["failed", "succeeded"])
         self.assertEqual(state.code_executions[1]["result"]["output"]["data_point_count"], 1)
+
+    def test_code_wizard_limits_self_correction_to_three_repairs(self):
+        state = ResearchState("测试问题")
+        state.facts = [{"content": "事实", "source_url": "https://example.com"}]
+        state.data_points = [{"id": "dp-1", "name": "指标", "value": 1}]
+
+        asyncio.run(CodeWizardAgent(AlwaysFailingCodeWizardClient()).run(state))
+
+        self.assertEqual(len(state.code_executions), 4)
+        self.assertTrue(all(item["status"] == "failed" for item in state.code_executions))
 
 
 if __name__ == "__main__":

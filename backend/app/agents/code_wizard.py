@@ -23,6 +23,8 @@ class CodeWizardAgent(BaseAgent):
     CODE_FIX_PROMPT = """请根据受控执行器返回的错误修复代码。保持原分析目的和已有图表 ID，不增加
 import、文件、网络、进程或动态执行。"""
     CHART_CODE_PROMPT = """请为已有图表生成与数据点一致的受控代码，不能引用不存在的图表 ID。"""
+    max_repair_attempts = 3
+    max_chart_sections = 2
 
     def __init__(
         self,
@@ -40,10 +42,10 @@ import、文件、网络、进程或动态执行。"""
 
         payload = {
             "query": state.query,
-            "facts": state.facts,
-            "data_points": state.data_points,
-            "insights": state.insights,
-            "charts": state.charts,
+            "facts": self._fact_summaries(state.facts[:20]),
+            "data_points": self._data_point_summaries(state.data_points),
+            "insights": state.insights[:10],
+            "charts": self._charts_for_analysis(state.charts),
             "instruction": (
                 "只根据已有事实和数据点生成分析代码。代码将在受控执行器中运行，"
                 "不要访问网络、文件系统或进程；返回代码用途、预期输出和关联图表 ID。"
@@ -59,14 +61,14 @@ import、文件、网络、进程或动态执行。"""
         unknown_chart_ids = set(plan["chart_ids"]) - known_chart_ids
         if unknown_chart_ids:
             raise ValueError("CodeWizard 引用了不存在的图表 ID")
-        for attempt in range(2):
+        for attempt in range(self.max_repair_attempts + 1):
             execution = self.executor.execute(
                 plan["code"],
                 {
                     "data_points": state.data_points,
-                    "facts": state.facts,
-                    "insights": state.insights,
-                    "charts": state.charts,
+                    "facts": state.facts[:20],
+                    "insights": state.insights[:10],
+                    "charts": self._charts_for_analysis(state.charts),
                 },
                 execution_id=f"exec_{len(state.code_executions) + 1}",
             )
@@ -82,14 +84,15 @@ import、文件、网络、进程或动态执行。"""
                     if str(chart.get("id", "")).strip() in execution.chart_ids:
                         chart["code"] = execution.code
                         chart["execution_id"] = execution.id
-            if execution.status != "failed" or attempt == 1:
+            if execution.status != "failed" or attempt >= self.max_repair_attempts:
                 break
             repair_payload = {
                 "mode": "repair",
                 "query": state.query,
-                "data_points": state.data_points,
+                "data_points": self._data_point_summaries(state.data_points),
                 "code": plan["code"],
-                "error": execution.error,
+                "error": str(execution.error).strip()[:2000],
+                "stdout": str(execution.stdout).strip()[:2000],
                 "instruction": "修复运行错误，保持相同的分析目的和图表 ID。",
             }
             repaired = await self._complete_json(
@@ -103,6 +106,45 @@ import、文件、网络、进程或动态执行。"""
             plan = repaired_plan
         state.phase = "analyzing"
         return state
+
+    @staticmethod
+    def _data_point_summaries(data_points: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        return [
+            {
+                "id": point.get("id", ""),
+                "name": point.get("name", ""),
+                "value": point.get("value"),
+                "unit": point.get("unit", ""),
+                "year": point.get("year"),
+                "source": point.get("source", ""),
+            }
+            for point in data_points[:20]
+        ]
+
+    @staticmethod
+    def _fact_summaries(facts: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        return [
+            {
+                "content": str(fact.get("content", "")).strip()[:300],
+                "source_url": fact.get("source_url", ""),
+                "source_title": fact.get("source_title", ""),
+            }
+            for fact in facts
+        ]
+
+    def _charts_for_analysis(self, charts: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Limit chart context to the first two chapter scopes like CodeWizard."""
+
+        section_ids: list[str] = []
+        selected: list[dict[str, Any]] = []
+        for chart in charts:
+            section_id = str(chart.get("section_id", "") or "analysis").strip()
+            if section_id not in section_ids and len(section_ids) >= self.max_chart_sections:
+                continue
+            if section_id not in section_ids:
+                section_ids.append(section_id)
+            selected.append(chart)
+        return selected
 
     @staticmethod
     def _validate_plan(value: Any) -> dict[str, Any]:
