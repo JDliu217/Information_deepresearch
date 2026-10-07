@@ -103,3 +103,32 @@ async def research_events(
         session_id=session_id,
         events=repository.list_events(session_id),
     )
+
+
+@router.post("/{session_id}/resume")
+async def resume_research(
+    session_id: str,
+    runtime: ResearchGraphRuntime = Depends(get_runtime),
+) -> StreamingResponse:
+    """从 LangGraph checkpoint 恢复研究并继续推送 SSE。"""
+
+    if not runtime.can_resume(session_id):
+        raise HTTPException(status_code=404, detail="没有可恢复的研究 checkpoint")
+    return StreamingResponse(
+        stream_runtime_resume_events(runtime, session_id),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "X-Research-Session-ID": session_id,
+        },
+    )
+
+
+async def stream_runtime_resume_events(
+    runtime: ResearchGraphRuntime,
+    session_id: str,
+) -> AsyncIterator[str]:
+    async for event in runtime.resume_stream(session_id):
+        if isinstance(event, dict):
+            yield encode_sse_event(event)

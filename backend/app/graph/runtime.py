@@ -45,12 +45,21 @@ class ResearchGraphRuntime:
         session_id: str | None = None,
     ) -> ResearchState:
         state = self._new_state(query, session_id)
+        return await self._run_state(state, resume=False)
+
+    async def resume(self, session_id: str) -> ResearchState:
+        """从指定 session 的 LangGraph checkpoint 继续运行。"""
+
+        state = self._load_checkpoint(session_id)
+        return await self._run_state(state, resume=True)
+
+    async def _run_state(self, state: ResearchState, *, resume: bool) -> ResearchState:
         self._start_run(state)
         if self.repository is not None:
             self.repository.save_state(state)
         latest_state = state
         try:
-            async for node_update in self._stream_updates(state):
+            async for node_update in self._stream_updates(state, resume=resume):
                 latest_state = self._persist_update(node_update, latest_state)
                 if self._should_cancel(latest_state):
                     self._mark_cancelled(latest_state)
@@ -68,11 +77,27 @@ class ResearchGraphRuntime:
         session_id: str | None = None,
     ) -> AsyncIterator[dict[str, Any]]:
         state = self._new_state(query, session_id)
+        async for event in self._stream_state_events(state, resume=False):
+            yield event
+
+    async def resume_stream(self, session_id: str) -> AsyncIterator[dict[str, Any]]:
+        """从 checkpoint 恢复并按事件流输出。"""
+
+        state = self._load_checkpoint(session_id)
+        async for event in self._stream_state_events(state, resume=True):
+            yield event
+
+    async def _stream_state_events(
+        self,
+        state: ResearchState,
+        *,
+        resume: bool,
+    ) -> AsyncIterator[dict[str, Any]]:
         self._start_run(state)
         if self.repository is not None:
             self.repository.save_state(state)
         try:
-            async for node_update in self._stream_updates(state):
+            async for node_update in self._stream_updates(state, resume=resume):
                 state = self._persist_update(node_update, state)
                 events = node_update.get("events", [])
                 if isinstance(events, list):
@@ -101,13 +126,33 @@ class ResearchGraphRuntime:
             return None
         return self.run_control.get(session_id)
 
+    def can_resume(self, session_id: str) -> bool:
+        """判断当前图是否有可读取的 checkpoint。"""
+
+        try:
+            snapshot = self.graph.get_state(self._graph_config(session_id))
+        except (AttributeError, ValueError):
+            return False
+        return bool(snapshot and snapshot.values and snapshot.next)
+
+    def _load_checkpoint(self, session_id: str) -> ResearchState:
+        if not self.can_resume(session_id):
+            raise ValueError(f"没有可恢复的研究 checkpoint: {session_id}")
+        snapshot = self.graph.get_state(self._graph_config(session_id))
+        state = snapshot.values.get("research_state")
+        if not isinstance(state, ResearchState):
+            raise ValueError(f"checkpoint 缺少研究状态: {session_id}")
+        return state
+
     async def _stream_updates(
         self,
         state: ResearchState,
+        *,
+        resume: bool = False,
     ) -> AsyncIterator[dict[str, Any]]:
         graph_stream = self.graph.astream(
-            initial_graph_state(state),
-            config=self._graph_config(),
+            None if resume else initial_graph_state(state),
+            config=self._graph_config(state.session_id),
             stream_mode="updates",
         )
         try:
@@ -199,8 +244,13 @@ class ResearchGraphRuntime:
                 error=str(error),
             )
 
-    def _graph_config(self) -> dict[str, int]:
-        return {"recursion_limit": max(30, 20 + 12 * self.max_iterations)}
+    def _graph_config(self, session_id: str | None = None) -> dict[str, Any]:
+        config: dict[str, Any] = {
+            "recursion_limit": max(30, 20 + 12 * self.max_iterations),
+        }
+        if session_id:
+            config["configurable"] = {"thread_id": session_id}
+        return config
 
 
 def from_events(events: list[Any]) -> AsyncIterator[dict[str, Any]]:
@@ -222,6 +272,7 @@ def create_research_runtime(
     max_iterations: int = 1,
     repository: ResearchRepository | None = None,
     run_control: RunControlStore | None = None,
+    checkpointer: Any | None = None,
 ) -> ResearchGraphRuntime:
     """创建唯一的 V2 LangGraph 运行实例。"""
 
@@ -237,7 +288,7 @@ def create_research_runtime(
         critic=CriticAgent(llm),
     )
     return ResearchGraphRuntime(
-        graph=build_research_graph(nodes),
+        graph=build_research_graph(nodes, checkpointer=checkpointer),
         max_iterations=max_iterations,
         repository=repository,
         run_control=run_control,

@@ -9,7 +9,7 @@ from .routes import select_review_route
 from .state import ResearchGraphState
 
 
-def build_research_graph(nodes: ResearchGraphNodes):
+def build_research_graph(nodes: ResearchGraphNodes, *, checkpointer=None):
     """构建 V2 主图。
 
     阶段开始事件使用独立节点，这样事件流会在耗时 Agent 运行前发出。
@@ -57,4 +57,4 @@ def build_research_graph(nodes: ResearchGraphNodes):
         },
     )
     graph.add_edge("complete", END)
-    return graph.compile()
+    return graph.compile(checkpointer=checkpointer)

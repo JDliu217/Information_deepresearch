@@ -18,6 +18,7 @@ def create_app(
     *,
     run_control: RunControlStore | None = None,
     repository: ResearchRepository | None = None,
+    checkpointer=None,
 ) -> FastAPI:
     """创建 API 应用；参数注入让测试和部署不依赖全局单例。"""
 
@@ -25,7 +26,9 @@ def create_app(
     app = FastAPI(title="Information DeepResearch API", version="2")
     app.state.run_control = control
     app.state.repository = repository or getattr(runtime, "repository", None)
-    app.state.research_runtime = runtime or build_default_runtime(control, repository)
+    app.state.research_runtime = runtime or build_default_runtime(
+        control, repository, checkpointer
+    )
     app.include_router(research_router)
 
     @app.get("/health", response_model=HealthResponse)

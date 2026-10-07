@@ -7,6 +7,8 @@
 from __future__ import annotations
 
 from fastapi import Request
+from langgraph.checkpoint.memory import InMemorySaver
+from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
 
 from app.core.run_control import InMemoryRunControlStore, RunControlStore
 from app.graph.runtime import ResearchGraphRuntime, create_research_runtime
@@ -18,15 +20,22 @@ from app.persistence.repository import ResearchRepository
 def build_default_runtime(
     run_control: RunControlStore | None = None,
     repository: ResearchRepository | None = None,
+    checkpointer=None,
 ) -> ResearchGraphRuntime:
     """建立不依赖外部服务的默认 runtime。"""
 
     control = run_control or InMemoryRunControlStore()
+    saver = checkpointer or InMemorySaver(
+        serde=JsonPlusSerializer(
+            allowed_msgpack_modules=[("app.domain.state", "ResearchState")]
+        )
+    )
     return create_research_runtime(
         MockLLMClient(),
         MockSearchClient(),
         run_control=control,
         repository=repository,
+        checkpointer=saver,
     )
 
 
