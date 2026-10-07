@@ -117,6 +117,17 @@ class ApiAppTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 404)
 
+    def test_injected_runtime_reuses_its_run_control_store(self):
+        control = InMemoryRunControlStore()
+        runtime = type("Runtime", (), {"run_control": control, "repository": None})()
+        control.start("injected-session")
+        client = TestClient(create_app(runtime=runtime))
+
+        response = client.get("/api/research/injected-session/status")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["status"], "running")
+
 
 
 if __name__ == "__main__":

@@ -22,7 +22,7 @@ def create_app(
 ) -> FastAPI:
     """创建 API 应用；参数注入让测试和部署不依赖全局单例。"""
 
-    control = run_control or InMemoryRunControlStore()
+    control = run_control or getattr(runtime, "run_control", None) or InMemoryRunControlStore()
     app = FastAPI(title="Information DeepResearch API", version="2")
     app.state.run_control = control
     app.state.repository = repository or getattr(runtime, "repository", None)
