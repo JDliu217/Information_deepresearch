@@ -24,7 +24,8 @@
 - iteration-08：加入 SQLAlchemy 持久化模型、Repository 和 Alembic 迁移，并接入 LangGraph runtime。
 - iteration-09：加入 Redis 运行状态、取消标志和 runtime 控制接口。
 - iteration-10：增加 FastAPI、SSE、状态查询、取消、历史事件和 LangGraph checkpoint 恢复接口。
-- 后续迭代：加入真实服务、本地知识库和简化前端。
+- iteration-11：接入 OpenAI 兼容真实 LLM、V2 Agent 提示词、Bocha 搜索和网页正文提取。
+- 后续迭代：加入本地知识库和简化前端。
 
 ## 学习方式
 
@@ -87,6 +88,14 @@ I10 增加 FastAPI 接口：`POST /api/research/stream` 以 SSE 推送 `Research
 PostgreSQL Repository 和其他 checkpoint 实现。FastAPI 只负责 HTTP/SSE 传输，不复制 Agent
 或 LangGraph 编排逻辑。
 
+I11 增加真实服务适配层。`OpenAICompatibleLLMClient` 支持 DashScope、DeepSeek、OpenAI
+等兼容接口；不同 Agent 可以通过环境变量使用不同模型，提示词集中在
+`backend/app/prompts/v2.py`。这些提示词参考原项目 V2 的规划、搜索分析、数据提取、
+知识图谱、图表、代码、写作和严格审核要求，并由现有 Agent 的 Python 校验器二次检查。
+`BochaSearchClient` 调用 Bocha Web Search API，去重搜索结果后使用 `WebPageFetcher` 抓取
+正文；正文抓取失败时保留摘要，不会丢弃来源。没有 API Key 时 runtime 自动使用 Mock，
+设置 `LLM_API_KEY` 或 `BOCHA_API_KEY` 后分别启用对应真实服务。
+
 事件类型包括 `research_started`、`phase_started`、`outline_ready`、
 `research_evidence_ready`、`analysis_ready`、`draft_ready`、`review_completed` 和 `research_completed`。
 `draft_ready` 事件还包含 `outline` 和 `draft_sections`，可以按章节读取中间结果。
@@ -111,6 +120,20 @@ uv pip install --python .venv\Scripts\python.exe -r backend\requirements.txt
 ```powershell
 $env:PYTHONPATH = "backend"
 .venv\Scripts\python.exe -m unittest discover -s backend/tests -v
+```
+
+真实服务配置示例见 `.env.example`。PowerShell 中可以直接设置环境变量：
+
+```powershell
+$env:LLM_API_KEY = "你的模型服务密钥"
+$env:LLM_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+$env:BOCHA_API_KEY = "你的 Bocha 密钥"
+```
+
+配置后使用 `--real` 运行命令行研究；不配置密钥时仍使用 Mock：
+
+```powershell
+.venv\Scripts\python.exe -m app.scripts.run_research --real "中国新能源汽车行业的发展趋势是什么？"
 ```
 
 ## 命令行运行

@@ -92,6 +92,14 @@ SSE 接口。
 `POST /api/research/{session_id}/resume` 从未完成节点继续。内存 checkpoint 只用于本地
 测试和当前学习阶段，生产环境的持久化 checkpoint 将在后续基础设施完善后替换。
 
+`iteration-11` 将 Mock 客户端替换为可配置的真实服务适配层，但不改变 Agent、ResearchState
+或 LangGraph 的职责。`OpenAICompatibleLLMClient` 负责调用兼容 OpenAI 协议的模型；提示词
+集中管理，并覆盖原项目 V2 中的规划、证据抽取、数据分析、知识图谱、图表、代码分析、
+章节写作、报告整合和对抗式审核能力。模型输出仍必须经过 JSON 解析和现有领域校验。
+`BochaSearchClient` 负责 Bocha 搜索、缓存、重试和来源标准化，`WebPageFetcher` 负责网页
+正文清洗；网页正文失败时回退到搜索摘要。没有密钥时自动使用 Mock，真实服务只通过环境
+变量启用。
+
 ## 4. 必须保留的对外结果
 
 最终结果必须包含：
@@ -127,6 +135,7 @@ SSE 接口。
 | `iteration-08` | PostgreSQL、SQLAlchemy、Alembic、Repository 和 LangGraph runtime 持久化接入 |
 | `iteration-09` | Redis 运行状态、取消标志、内存测试实现和 runtime 控制接口 |
 | `iteration-10` | FastAPI、SSE、状态/取消/历史事件接口和 LangGraph checkpoint 恢复 |
+| `iteration-11` | OpenAI 兼容真实 LLM、V2 提示词、Bocha 搜索和网页正文提取 |
 | `iteration-10` | FastAPI SSE 接口、检查点、恢复和取消 |
 | `iteration-11` | 真实 LLM、Bocha 搜索和网页来源提取 |
 | `iteration-12` | RAG、Embedding、Milvus 和本地知识库 |
