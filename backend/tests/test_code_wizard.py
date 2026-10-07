@@ -63,6 +63,17 @@ class CodeWizardAgentTests(unittest.TestCase):
         self.assertEqual(execution["result"]["output"]["data_point_count"], 3)
         self.assertIn("data_point_count", execution["stdout"])
 
+    def test_code_wizard_associates_successful_code_with_existing_chart(self):
+        state = ResearchState("测试问题")
+        state.facts = [{"content": "事实", "source_url": "https://example.com"}]
+        state.data_points = [{"id": "dp-1", "name": "指标", "value": 1}]
+        state.charts = [{"id": "chart-1", "title": "测试图表"}]
+
+        asyncio.run(CodeWizardAgent(MockLLMClient()).run(state))
+
+        self.assertEqual(state.charts[0]["execution_id"], "exec_1")
+        self.assertEqual(state.charts[0]["code"], state.code_executions[0]["code"])
+
     def test_code_wizard_rejects_duplicate_chart_ids(self):
         state = ResearchState("测试问题")
         state.facts = [{"content": "事实", "source_url": "https://example.com"}]

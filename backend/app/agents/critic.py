@@ -32,6 +32,7 @@ class CriticAgent(BaseAgent):
                 "data_points": state.data_points,
                 "insights": state.insights,
                 "charts": state.charts,
+                "code_executions": state.code_executions,
                 "iteration": state.iteration,
                 "instruction": "检查事实和数据洞察是否有来源支撑，并判断报告是否需要补充研究。",
             },

@@ -277,6 +277,18 @@ class MockLLMClient(LLMClient):
                     lines.append(f"- {title}（{chart_type}）")
                 lines.append("")
 
+            successful_executions = [
+                item
+                for item in payload.get("code_executions", [])
+                if item.get("status") == "succeeded"
+            ]
+            if successful_executions:
+                lines.extend(["## 代码分析", ""])
+                for execution in successful_executions:
+                    output = execution.get("result", {}).get("output", {})
+                    lines.append(f"- {execution['id']}：{output}")
+                lines.append("")
+
             review = payload.get("review_result", {})
             issues = review.get("issues", []) if isinstance(review, dict) else []
             if issues:

@@ -105,6 +105,7 @@ class Chart:
     image_path: str | None = None
     image_base64: str | None = None
     section_id: str | None = None
+    execution_id: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

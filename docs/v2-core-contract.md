@@ -26,7 +26,7 @@ V2 的核心研究行为。
 | ChiefArchitect | `PlannerAgent` | 已有简化版 |
 | DeepScout | `ResearcherAgent` + `FactExtractorAgent` | 已有简化版 |
 | DataAnalyst | `DataAnalystAgent` | 已有 Mock 版：从数据点生成洞察和 ECharts 配置 |
-| CodeWizard | 待建立 `CodeWizardAgent` | 未实现 |
+| CodeWizard | `CodeWizardAgent` | 已有受限统计执行版；Docker 隔离待后续实现 |
 | LeadWriter | `WriterAgent` | 已有简化版 |
 | CriticMaster | `CriticAgent` | 已有简化版 |
 | V2 Graph | `ResearchWorkflow` | 已有简化版 |
@@ -44,8 +44,9 @@ V2 的核心研究行为。
 - 事件消息、日志、错误和任务状态
 
 当前 `iteration-04` 已经把假设证据、数据点和基础知识图谱接入 `FactExtractorAgent`，
-并由 `DataAnalystAgent` 生成洞察和 ECharts 配置，交给 Writer 和 Critic 使用。
-CodeWizard 的受限代码执行和检查点仍在后续迭代逐步补齐，避免一次性复制原项目的大状态对象。
+并由 `DataAnalystAgent` 生成洞察和 ECharts 配置，交给 CodeWizard、Writer 和 Critic 使用。
+当前 CodeWizard 只解释少量统计表达式，记录执行状态、输出和错误；它不是最终的安全沙箱，
+复杂 Python、Pandas 和图像生成要在后续 Docker 执行器中实现。
 
 ## 3. 必须保留的审核路由
 
@@ -86,12 +87,17 @@ CodeWizard 的受限代码执行和检查点仍在后续迭代逐步补齐，避
 | `iteration-02` | 对齐状态模型和事件协议，建立本契约对应的领域对象 |
 | `iteration-03` | 增加假设驱动研究、数据点和知识图谱基础 |
 | `iteration-04` | 实现 DataAnalyst，输出洞察和 ECharts 配置，并接入报告与事件流 |
-| `iteration-05` | 实现 CodeWizard，完成受限代码执行和图表记录 |
-| `iteration-06` | 完善章节写作、引用和结构化审核反馈 |
-| `iteration-07` | 增加 FastAPI SSE 单一研究接口 |
-| `iteration-08` | 增加检查点、恢复和取消 |
-| `iteration-09` | 接入真实 LLM、Bocha 搜索和可选本地知识库 |
-| `iteration-10` | 建立简化前端 |
-| `iteration-11` | 完成端到端测试、V1 清理和文档整理 |
+| `iteration-05` | 实现 CodeWizard，完成受限统计执行、错误重试、执行记录和工作流接入 |
+| `iteration-06` | 完善章节写作、引用和 CriticMaster 结构化审核反馈 |
+| `iteration-07` | 使用 LangGraph 编排唯一的 V2 主工作流 |
+| `iteration-08` | PostgreSQL、SQLAlchemy、Alembic 和研究持久化模型 |
+| `iteration-09` | Redis 运行状态、取消标志和必要缓存 |
+| `iteration-10` | FastAPI SSE 接口、检查点、恢复和取消 |
+| `iteration-11` | 真实 LLM、Bocha 搜索和网页来源提取 |
+| `iteration-12` | RAG、Embedding、Milvus 和本地知识库 |
+| `iteration-13` | Text2SQL 和数据库探索 |
+| `iteration-14` | 长期记忆层；根据核心链路实际需要确定接入点 |
+| `iteration-15` | 简化前端和研究历史展示 |
+| `iteration-16` | Docker 执行隔离、端到端测试和文档整理 |
 
 每个迭代都必须先通过 Mock 测试，再考虑真实服务或外部基础设施。

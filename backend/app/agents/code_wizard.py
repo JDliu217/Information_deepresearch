@@ -67,6 +67,11 @@ class CodeWizardAgent(BaseAgent):
             }
             execution.chart_ids = plan["chart_ids"]
             state.code_executions.append(execution.to_dict())
+            if execution.status == "succeeded":
+                for chart in state.charts:
+                    if str(chart.get("id", "")).strip() in execution.chart_ids:
+                        chart["code"] = execution.code
+                        chart["execution_id"] = execution.id
             if execution.status != "failed" or attempt == 1:
                 break
             repaired = await self.llm.complete_json(
