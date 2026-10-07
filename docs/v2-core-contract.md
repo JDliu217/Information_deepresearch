@@ -78,7 +78,12 @@ V2 的核心研究行为。
 
 I8 的 `ResearchRepository` 使用 SQLAlchemy 保存研究状态快照和有序事件；PostgreSQL
 表结构由 Alembic 管理。runtime 负责在图节点更新后调用 Repository，Agent 不直接访问
-数据库。本轮尚未启用 Redis、检查点、恢复和取消。
+数据库。
+
+`iteration-09` 增加 `RunControlStore`，用 Redis 保存短期运行摘要和取消标志。runtime
+在开始、节点更新、完成和异常时更新摘要；收到取消请求后，在下一个 LangGraph 节点边界
+停止。内存实现用于 Mock 测试，Redis 实现用于真实部署。本轮尚未启用检查点、恢复和
+SSE 接口。
 
 ## 4. 必须保留的对外结果
 
@@ -113,7 +118,7 @@ I8 的 `ResearchRepository` 使用 SQLAlchemy 保存研究状态快照和有序�
 | `iteration-06` | 完善章节级审核上下文、引用追踪、结构化 CriticMaster 反馈和审核路由 |
 | `iteration-07` | 使用 LangGraph 编排唯一的 V2 主工作流，保留 `run()`、`stream()` 和事件协议 |
 | `iteration-08` | PostgreSQL、SQLAlchemy、Alembic、Repository 和 LangGraph runtime 持久化接入 |
-| `iteration-09` | Redis 运行状态、取消标志和必要缓存 |
+| `iteration-09` | Redis 运行状态、取消标志、内存测试实现和 runtime 控制接口 |
 | `iteration-10` | FastAPI SSE 接口、检查点、恢复和取消 |
 | `iteration-11` | 真实 LLM、Bocha 搜索和网页来源提取 |
 | `iteration-12` | RAG、Embedding、Milvus 和本地知识库 |

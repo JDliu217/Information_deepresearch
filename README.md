@@ -22,7 +22,8 @@
 - iteration-06：完善章节级审核上下文、结构化 Critic 反馈、事实核查和审核路由。
 - iteration-07：使用 LangGraph 编排唯一的 V2 主工作流，保留原有事件流接口。
 - iteration-08：加入 SQLAlchemy 持久化模型、Repository 和 Alembic 迁移，并接入 LangGraph runtime。
-- 后续迭代：加入 Redis、SSE、检查点、本地知识库、真实服务和简化前端。
+- iteration-09：加入 Redis 运行状态、取消标志和 runtime 控制接口。
+- 后续迭代：加入 SSE、检查点、本地知识库、真实服务和简化前端。
 
 ## 学习方式
 
@@ -68,8 +69,14 @@ Agent 运行前发出。
 
 I8 的 Repository 接在 runtime 和数据库之间：runtime 保存研究状态快照并追加事件，
 `ResearchRepository` 负责 SQLAlchemy 数据访问，Agent 不直接操作数据库。PostgreSQL
-表结构由 Alembic 迁移创建；本地测试使用 SQLite 验证相同的数据访问契约。检查点、
-恢复和取消将在后续迭代接入。
+表结构由 Alembic 迁移创建；本地测试使用 SQLite 验证相同的数据访问契约。检查点和
+恢复将在后续迭代接入。
+
+I9 增加了 `RunControlStore`。`InMemoryRunControlStore` 用于本地测试，
+`RedisRunControlStore` 用于真实运行环境。runtime 会在开始、节点更新、完成和异常时更新
+运行摘要；调用 `runtime.request_cancel(session_id)` 会设置取消标志，流程在下一个图节点
+边界停止并标记为 `cancelled`。Redis 只保存短期运行控制数据，完整状态和事件仍由 I8
+的 PostgreSQL Repository 保存。
 
 事件类型包括 `research_started`、`phase_started`、`outline_ready`、
 `research_evidence_ready`、`analysis_ready`、`draft_ready`、`review_completed` 和 `research_completed`。
