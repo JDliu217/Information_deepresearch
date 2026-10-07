@@ -18,19 +18,11 @@ class OpenAICompatibleLLMClient(LLMClient):
 
     def __init__(self, settings: LLMSettings | None = None, *, client: Any | None = None):
         self.settings = settings or LLMSettings.from_env()
-        if client is None:
+        if client is not None:
+            self.client = client
+        else:
             self.settings.validate()
-            try:
-                from openai import AsyncOpenAI
-            except ImportError as exc:
-                raise RuntimeError("使用真实 LLM 前请安装 openai 依赖") from exc
-            client = AsyncOpenAI(
-                api_key=self.settings.api_key,
-                base_url=self.settings.base_url,
-                timeout=self.settings.timeout_seconds,
-                max_retries=0,
-            )
-        self.client = client
+            self.client = None
 
     async def complete_json(
         self,
@@ -85,7 +77,7 @@ class OpenAICompatibleLLMClient(LLMClient):
         last_error: Exception | None = None
         for attempt in range(self.settings.max_retries + 1):
             try:
-                response = await self.client.chat.completions.create(**request)
+                response = await self._get_client().chat.completions.create(**request)
                 content = self._response_content(response)
                 if not content:
                     raise ValueError(f"真实 LLM 的 {role} 返回空内容")
@@ -98,6 +90,20 @@ class OpenAICompatibleLLMClient(LLMClient):
                     break
                 await asyncio.sleep(min(2**attempt, 4))
         raise RuntimeError(f"真实 LLM 调用失败: role={role}") from last_error
+
+    def _get_client(self) -> Any:
+        if self.client is None:
+            try:
+                from openai import AsyncOpenAI
+            except ImportError as exc:
+                raise RuntimeError("使用真实 LLM 前请安装 openai 依赖") from exc
+            self.client = AsyncOpenAI(
+                api_key=self.settings.api_key,
+                base_url=self.settings.base_url,
+                timeout=self.settings.timeout_seconds,
+                max_retries=0,
+            )
+        return self.client
 
     @staticmethod
     def _response_content(response: Any) -> str:

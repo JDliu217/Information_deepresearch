@@ -15,6 +15,7 @@ from app.graph.runtime import ResearchGraphRuntime, create_research_runtime
 from app.core.llm_client import MockLLMClient
 from app.core.search_client import MockSearchClient
 from app.persistence.repository import ResearchRepository
+from app.core.runtime_factory import create_configured_runtime
 
 
 def build_default_runtime(
@@ -29,6 +30,20 @@ def build_default_runtime(
         serde=JsonPlusSerializer(
             allowed_msgpack_modules=[("app.domain.state", "ResearchState")]
         )
+    )
+
+
+def build_configured_runtime(
+    run_control: RunControlStore | None = None,
+    repository: ResearchRepository | None = None,
+    checkpointer=None,
+) -> ResearchGraphRuntime:
+    """按环境变量选择真实或 Mock 服务。"""
+
+    return create_configured_runtime(
+        run_control=run_control,
+        repository=repository,
+        checkpointer=checkpointer,
     )
     return create_research_runtime(
         MockLLMClient(),

@@ -5,8 +5,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 
-from app.core.llm_client import MockLLMClient
-from app.core.search_client import MockSearchClient
+from app.core.runtime_factory import create_configured_runtime
 from app.domain.state import ResearchState
 from app.graph.runtime import create_research_runtime
 
@@ -17,6 +16,11 @@ def build_parser() -> argparse.ArgumentParser:
         "query",
         nargs="?",
         help="研究问题；不传时会进入交互式输入",
+    )
+    parser.add_argument(
+        "--real",
+        action="store_true",
+        help="强制使用环境变量配置的真实 LLM 和 Bocha 搜索",
     )
     return parser
 
@@ -69,8 +73,8 @@ def print_state(state: ResearchState) -> None:
     print(f"会话 ID: {state.session_id}")
 
 
-async def run(query: str) -> ResearchState:
-    runtime = create_research_runtime(MockLLMClient(), MockSearchClient())
+async def run(query: str, *, force_real: bool = False) -> ResearchState:
+    runtime = create_configured_runtime(force_real=force_real)
     return await runtime.run(query)
 
 
@@ -79,7 +83,7 @@ def main() -> None:
     query = (args.query or input("请输入研究问题：")).strip()
     if not query:
         raise SystemExit("研究问题不能为空")
-    state = asyncio.run(run(query))
+    state = asyncio.run(run(query, force_real=args.real))
     print_state(state)
 
 

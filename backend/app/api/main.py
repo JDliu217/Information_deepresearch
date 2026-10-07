@@ -8,7 +8,7 @@ from app.core.run_control import InMemoryRunControlStore, RunControlStore
 from app.graph.runtime import ResearchGraphRuntime
 from app.persistence.repository import ResearchRepository
 
-from .dependencies import build_default_runtime
+from .dependencies import build_configured_runtime
 from .research import router as research_router
 from .schemas import HealthResponse
 
@@ -26,7 +26,7 @@ def create_app(
     app = FastAPI(title="Information DeepResearch API", version="2")
     app.state.run_control = control
     app.state.repository = repository or getattr(runtime, "repository", None)
-    app.state.research_runtime = runtime or build_default_runtime(
+    app.state.research_runtime = runtime or build_configured_runtime(
         control, repository, checkpointer
     )
     app.include_router(research_router)
