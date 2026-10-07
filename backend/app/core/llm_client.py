@@ -169,6 +169,13 @@ class MockLLMClient(LLMClient):
             }
 
         if role == "code_wizard":
+            if payload.get("mode") == "repair":
+                return {
+                    "purpose": "修复统计分析代码。",
+                    "code": "result = {'data_point_count': len(data_points)}\nprint(result)",
+                    "expected_outputs": ["analysis_summary"],
+                    "chart_ids": [],
+                }
             data_points = payload.get("data_points", [])
             chart_ids = [
                 str(chart.get("id", "")).strip()

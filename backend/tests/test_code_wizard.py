@@ -30,6 +30,18 @@ class UnknownChartClient(InvalidCodeWizardClient):
         return result
 
 
+class RepairingCodeWizardClient(MockLLMClient):
+    async def complete_json(self, role, payload):
+        if role == "code_wizard" and payload.get("mode") != "repair":
+            return {
+                "purpose": "统计数据点",
+                "code": "result = {'count': 1 / 0}",
+                "expected_outputs": ["count"],
+                "chart_ids": [],
+            }
+        return await super().complete_json(role, payload)
+
+
 class CodeWizardAgentTests(unittest.TestCase):
     def test_code_wizard_executes_generated_plan_and_records_result(self):
         async def run():
@@ -75,6 +87,16 @@ class CodeWizardAgentTests(unittest.TestCase):
 
         self.assertIs(result, state)
         self.assertEqual(state.code_executions, [])
+
+    def test_code_wizard_repairs_runtime_failure_once(self):
+        state = ResearchState("测试问题")
+        state.facts = [{"content": "事实", "source_url": "https://example.com"}]
+        state.data_points = [{"id": "dp-1", "name": "指标", "value": 1}]
+
+        asyncio.run(CodeWizardAgent(RepairingCodeWizardClient()).run(state))
+
+        self.assertEqual([item["status"] for item in state.code_executions], ["failed", "succeeded"])
+        self.assertEqual(state.code_executions[1]["result"]["output"]["data_point_count"], 1)
 
 
 if __name__ == "__main__":

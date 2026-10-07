@@ -49,23 +49,41 @@ class CodeWizardAgent(BaseAgent):
         unknown_chart_ids = set(plan["chart_ids"]) - known_chart_ids
         if unknown_chart_ids:
             raise ValueError("CodeWizard 引用了不存在的图表 ID")
-        execution = self.executor.execute(
-            plan["code"],
-            {
-                "data_points": state.data_points,
-                "facts": state.facts,
-                "insights": state.insights,
-                "charts": state.charts,
-            },
-            execution_id=f"exec_{len(state.code_executions) + 1}",
-        )
-        execution.result = {
-            "purpose": plan["purpose"],
-            "expected_outputs": plan["expected_outputs"],
-            "output": execution.result,
-        }
-        execution.chart_ids = plan["chart_ids"]
-        state.code_executions.append(execution.to_dict())
+        for attempt in range(2):
+            execution = self.executor.execute(
+                plan["code"],
+                {
+                    "data_points": state.data_points,
+                    "facts": state.facts,
+                    "insights": state.insights,
+                    "charts": state.charts,
+                },
+                execution_id=f"exec_{len(state.code_executions) + 1}",
+            )
+            execution.result = {
+                "purpose": plan["purpose"],
+                "expected_outputs": plan["expected_outputs"],
+                "output": execution.result,
+            }
+            execution.chart_ids = plan["chart_ids"]
+            state.code_executions.append(execution.to_dict())
+            if execution.status != "failed" or attempt == 1:
+                break
+            repaired = await self.llm.complete_json(
+                role=self.name,
+                payload={
+                    "mode": "repair",
+                    "query": state.query,
+                    "data_points": state.data_points,
+                    "code": plan["code"],
+                    "error": execution.error,
+                    "instruction": "修复运行错误，保持相同的分析目的和图表 ID。",
+                },
+            )
+            repaired_plan = self._validate_plan(repaired)
+            if set(repaired_plan["chart_ids"]) - known_chart_ids:
+                raise ValueError("CodeWizard 修复代码引用了不存在的图表 ID")
+            plan = repaired_plan
         state.phase = "analyzing"
         return state
 
