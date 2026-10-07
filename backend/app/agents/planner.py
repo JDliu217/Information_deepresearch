@@ -69,6 +69,57 @@ class PlannerAgent(BaseAgent):
         state.phase = "planning"
         return state
 
+    async def revise(self, state: ResearchState) -> ResearchState:
+        """根据已收集证据检查并按需调整研究大纲。
+
+        参考工程把动态大纲检查放在 Architect 的 reviewing 分支。当前
+        LangGraph 仍由独立节点决定何时调用，本方法只负责规划数据本身。
+        """
+
+        if not state.query.strip() or not state.outline:
+            return state
+        payload = {
+            "query": state.query,
+            "current_outline": [
+                {
+                    "id": section.get("id"),
+                    "title": section.get("title"),
+                    "status": section.get("status", "pending"),
+                    "search_queries": section.get("search_queries", []),
+                }
+                for section in state.outline
+            ],
+            "new_findings": [
+                str(fact.get("content", "")).strip()[:200]
+                for fact in state.facts[-10:]
+                if str(fact.get("content", "")).strip()
+            ],
+            "completed_sections": sum(
+                section.get("status") in {"drafted", "reviewed", "final"}
+                for section in state.outline
+            ),
+            "facts_count": len(state.facts),
+            "data_points_count": len(state.data_points),
+        }
+        result = await self._complete_json(
+            payload,
+            system_prompt=self.PLANNING_SYSTEM,
+            user_prompt=self._render_prompt(self.REVISION_PROMPT, payload),
+        )
+        if result.get("needs_revision") and result.get("revised_outline"):
+            state.outline = self._validate_outline(result["revised_outline"])
+        new_queries = result.get("new_search_queries", [])
+        if isinstance(new_queries, list):
+            existing = set(state.pending_search_queries)
+            for item in new_queries:
+                query = str(item).strip()
+                if query and query not in existing:
+                    state.pending_search_queries.append(query)
+                    existing.add(query)
+        return state
+
+    run_revision = revise
+
     @staticmethod
     def _validate_outline(value: Any) -> list[dict[str, Any]]:
         """用 Section 校验并序列化 LLM 返回的章节大纲。"""

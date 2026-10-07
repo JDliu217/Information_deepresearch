@@ -21,23 +21,43 @@ class ResearcherAgent(BaseAgent):
     SUPPLEMENTARY_SEARCH_PROMPT = """你负责根据审核提出的缺口执行补充检索。每次只执行明确的审核查询，
 避免重复已有 URL，并把新结果关联到对应章节或审核缺口。"""
 
-    def __init__(self, search: SearchClient, results_per_question: int = 3):
+    max_sections_per_run = 3
+    max_supplementary_queries = 5
+
+    def __init__(
+        self,
+        search: SearchClient,
+        results_per_question: int = 10,
+        *,
+        max_sections: int = max_sections_per_run,
+        max_supplementary_queries: int = max_supplementary_queries,
+    ):
         if results_per_question < 1:
             raise ValueError("results_per_question 必须大于 0")
+        if max_sections < 1:
+            raise ValueError("max_sections 必须大于 0")
+        if max_supplementary_queries < 1:
+            raise ValueError("max_supplementary_queries 必须大于 0")
         self.search = search
         self.results_per_question = results_per_question
+        self.max_sections = max_sections
+        self.max_supplementary_queries = max_supplementary_queries
 
     async def run(self, state: ResearchState) -> ResearchState:
         """搜索章节查询，并把来源与章节关联后写入共享状态。"""
-        if state.pending_search_queries:
+        supplementary = bool(state.pending_search_queries)
+        if supplementary:
             tasks = [
-                {"query": query.strip(), "section_id": "", "section_title": ""}
-                for query in state.pending_search_queries
+                {"query": query.strip(), "section_id": "", "section_title": "", "supplementary": True}
+                for query in state.pending_search_queries[: self.max_supplementary_queries]
             ]
         else:
-            tasks = self._build_search_tasks(state)
+            tasks = self._build_search_tasks(state, max_sections=self.max_sections)
         tasks = [task for task in tasks if task["query"]]
         if not tasks:
+            if state.outline:
+                state.phase = "researching"
+                return state
             raise ValueError("没有可执行的研究子问题")
 
         collected_sources = list(state.raw_sources)
@@ -48,6 +68,9 @@ class ResearcherAgent(BaseAgent):
             )
             for result in results:
                 source = result.to_dict()
+                source.setdefault("summary", source.get("snippet", ""))
+                source.setdefault("source", "")
+                source.setdefault("date", "")
                 if task["section_id"]:
                     source["section_id"] = task["section_id"]
                     source["section_title"] = task["section_title"]
@@ -58,19 +81,39 @@ class ResearcherAgent(BaseAgent):
             {
                 "title": source["title"],
                 "url": source["url"],
+                    "source": source.get("source", ""),
+                    "date": source.get("date", ""),
             }
             for source in state.raw_sources
             if source.get("url")
         ]
         state.pending_search_queries = []
+        if not supplementary:
+            researched_ids = {
+                task["section_id"] for task in tasks if task.get("section_id")
+            }
+            for section in state.outline:
+                if str(section.get("id", "")).strip() in researched_ids:
+                    section["status"] = "researching"
         state.phase = "researching"
         return state
 
     @staticmethod
-    def _build_search_tasks(state: ResearchState) -> list[dict[str, str]]:
+    def _build_search_tasks(
+        state: ResearchState,
+        *,
+        max_sections: int | None = None,
+    ) -> list[dict[str, str]]:
         """把章节大纲转换成搜索任务；没有大纲时回退到研究问题。"""
         tasks: list[dict[str, str]] = []
-        for section in state.outline:
+        sections = [
+            section
+            for section in state.outline
+            if str(section.get("status", "pending")).strip() == "pending"
+        ]
+        if max_sections is not None:
+            sections = sections[:max_sections]
+        for section in sections:
             section_id = str(section.get("id", "")).strip()
             section_title = str(section.get("title", "")).strip()
             queries = section.get("search_queries") or [section_title]
@@ -84,6 +127,7 @@ class ResearcherAgent(BaseAgent):
                             "query": query,
                             "section_id": section_id,
                             "section_title": section_title,
+                            "supplementary": False,
                         }
                     )
 
@@ -91,8 +135,13 @@ class ResearcherAgent(BaseAgent):
             return tasks
 
         return [
-            {"query": str(question).strip(), "section_id": "", "section_title": ""}
-            for question in state.research_questions
+            {
+                "query": str(question).strip(),
+                "section_id": "",
+                "section_title": "",
+                "supplementary": False,
+            }
+            for question in state.research_questions[: max_sections or len(state.research_questions)]
         ]
 
     @staticmethod

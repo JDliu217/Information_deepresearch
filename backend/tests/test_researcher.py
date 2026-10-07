@@ -5,10 +5,72 @@ from app.agents.planner import PlannerAgent
 from app.agents.researcher import ResearcherAgent
 from app.core.llm_client import MockLLMClient
 from app.core.search_client import MockSearchClient
+from app.core.search_client import SearchClient, SearchResult
 from app.domain.state import ResearchState
 
 
 class ResearcherAgentTests(unittest.TestCase):
+    def test_researcher_limits_normal_run_to_three_pending_sections_and_ten_results(self):
+        class CapturingSearch(SearchClient):
+            def __init__(self):
+                self.calls = []
+
+            async def search(self, query, limit=3):
+                self.calls.append((query, limit))
+                return [
+                    SearchResult(
+                        title=f"来源 {index}",
+                        url=f"https://example.com/{query}/{index}",
+                        snippet="摘要",
+                        query=query,
+                    )
+                    for index in range(2)
+                ]
+
+        async def run():
+            search = CapturingSearch()
+            state = ResearchState("测试问题")
+            state.outline = [
+                {
+                    "id": f"sec-{index}",
+                    "title": f"章节 {index}",
+                    "status": "pending",
+                    "search_queries": [f"查询 {index}"],
+                }
+                for index in range(5)
+            ]
+            await ResearcherAgent(search).run(state)
+            return state, search
+
+        state, search = asyncio.run(run())
+
+        self.assertEqual(len(search.calls), 3)
+        self.assertTrue(all(limit == 10 for _, limit in search.calls))
+        self.assertEqual(
+            {section["id"] for section in state.outline if section["status"] == "researching"},
+            {"sec-0", "sec-1", "sec-2"},
+        )
+        self.assertEqual(len(state.raw_sources), 6)
+
+    def test_researcher_limits_supplementary_queries_to_five(self):
+        class CapturingSearch(SearchClient):
+            def __init__(self):
+                self.calls = []
+
+            async def search(self, query, limit=3):
+                self.calls.append((query, limit))
+                return [SearchResult("来源", f"https://example.com/{query}", "摘要", query)]
+
+        async def run():
+            search = CapturingSearch()
+            state = ResearchState("测试问题")
+            state.pending_search_queries = [f"补充查询 {index}" for index in range(8)]
+            await ResearcherAgent(search).run(state)
+            return search
+
+        search = asyncio.run(run())
+        self.assertEqual(len(search.calls), 5)
+        self.assertTrue(all(limit == 10 for _, limit in search.calls))
     def test_researcher_collects_sources_after_planning(self):
         async def run_chain():
             state = ResearchState("中国新能源汽车行业的发展趋势是什么？")

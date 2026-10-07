@@ -148,6 +148,9 @@ class BochaSearchClient(SearchClient):
                     snippet=str(item.get("snippet") or summary).strip(),
                     query=query,
                     content=summary,
+                    source=str(item.get("siteName") or item.get("site_name") or "").strip(),
+                    date=str(item.get("datePublished") or item.get("dateLastCrawled") or "").strip(),
+                    summary=summary,
                 )
             )
         return results

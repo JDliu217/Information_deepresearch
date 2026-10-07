@@ -22,6 +22,9 @@ class SearchResult:
     snippet: str
     query: str
     content: str = ""
+    source: str = ""
+    date: str = ""
+    summary: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         """转换成适合放进 ResearchState 的字典。"""

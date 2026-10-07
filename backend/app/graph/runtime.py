@@ -268,7 +268,7 @@ def create_research_runtime(
     llm: LLMClient,
     search: SearchClient,
     *,
-    results_per_question: int = 3,
+    results_per_question: int = 10,
     max_iterations: int = 1,
     repository: ResearchRepository | None = None,
     run_control: RunControlStore | None = None,

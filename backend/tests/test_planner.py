@@ -15,6 +15,25 @@ class BrokenPlannerClient(LLMClient):
 
 
 class PlannerAgentTests(unittest.TestCase):
+    def test_planner_revision_uses_progress_and_appends_new_queries(self):
+        class RevisionClient(MockLLMClient):
+            async def complete_json(self, role, payload, system_prompt="", user_prompt=""):
+                if payload.get("current_outline"):
+                    return {
+                        "needs_revision": False,
+                        "new_search_queries": ["缺口查询", "缺口查询"],
+                    }
+                return await super().complete_json(role, payload, system_prompt, user_prompt)
+
+        async def run():
+            state = ResearchState("测试问题")
+            await PlannerAgent(RevisionClient()).run(state)
+            state.facts = [{"content": "新发现"}]
+            await PlannerAgent(RevisionClient()).revise(state)
+            return state
+
+        state = asyncio.run(run())
+        self.assertEqual(state.pending_search_queries, ["缺口查询"])
     def test_planner_writes_outline_into_state(self):
         state = ResearchState("中国新能源汽车行业的发展趋势是什么？")
         agent = PlannerAgent(MockLLMClient())
