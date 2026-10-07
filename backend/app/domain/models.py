@@ -28,6 +28,7 @@ ChartType = Literal[
     "horizontal_bar",
     "radar",
 ]
+ExecutionStatus = Literal["pending", "succeeded", "failed", "timeout", "rejected"]
 IssueType = Literal[
     "missing_source",
     "logic_error",
@@ -104,6 +105,24 @@ class Chart:
     image_path: str | None = None
     image_base64: str | None = None
     section_id: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
+class CodeExecution:
+    """CodeWizard 一次代码分析执行的可持久化记录。"""
+
+    id: str
+    code: str
+    status: ExecutionStatus = "pending"
+    stdout: str = ""
+    stderr: str = ""
+    error: str = ""
+    duration_ms: int | None = None
+    result: dict[str, Any] = field(default_factory=dict)
+    chart_ids: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
