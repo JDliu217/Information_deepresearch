@@ -73,24 +73,13 @@ class OpenAICompatibleLLMClient(LLMClient):
         system_prompt: str = "",
         user_prompt: str = "",
     ) -> str:
-        content = await self._complete(
+        return await self._complete(
             role,
             payload,
             system_prompt=system_prompt,
             user_prompt=user_prompt,
             json_mode=False,
         )
-        parsed = self._try_parse_json(content)
-        if isinstance(parsed, dict):
-            mode = payload.get("mode")
-            output_field = {
-                "section": "content",
-                "report": "full_report",
-                "revision": "revised_content",
-            }.get(str(mode))
-            if output_field and isinstance(parsed.get(output_field), str):
-                return parsed[output_field].strip()
-        return content.strip()
 
     async def _complete(
         self,

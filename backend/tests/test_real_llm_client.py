@@ -184,7 +184,7 @@ class RealLLMClientTests(unittest.TestCase):
         self.assertNotIn("extra_body", request)
         self.assertNotIn("reasoning_effort", request)
 
-    def test_complete_text_extracts_report_field_from_json_response(self):
+    def test_complete_text_returns_raw_response_for_agent_to_parse(self):
         fake = FakeClient(['{"full_report": "## 执行摘要\\n内容", "references": []}'])
         client = OpenAICompatibleLLMClient(self.settings(), client=fake)
 
@@ -192,7 +192,7 @@ class RealLLMClientTests(unittest.TestCase):
             client.complete_text("writer", {"mode": "report", "query": "测试"})
         )
 
-        self.assertEqual(result, "## 执行摘要\n内容")
+        self.assertEqual(result, '{"full_report": "## 执行摘要\\n内容", "references": []}')
         self.assertNotIn("response_format", fake.chat.completions.requests[0])
 
     def test_invalid_json_is_retried_and_then_reported(self):
