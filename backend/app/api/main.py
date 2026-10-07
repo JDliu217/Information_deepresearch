@@ -6,6 +6,7 @@ from fastapi import FastAPI
 
 from app.core.run_control import InMemoryRunControlStore, RunControlStore
 from app.graph.runtime import ResearchGraphRuntime
+from app.persistence.repository import ResearchRepository
 
 from .dependencies import build_default_runtime
 from .research import router as research_router
@@ -16,13 +17,15 @@ def create_app(
     runtime: ResearchGraphRuntime | None = None,
     *,
     run_control: RunControlStore | None = None,
+    repository: ResearchRepository | None = None,
 ) -> FastAPI:
     """创建 API 应用；参数注入让测试和部署不依赖全局单例。"""
 
     control = run_control or InMemoryRunControlStore()
     app = FastAPI(title="Information DeepResearch API", version="2")
     app.state.run_control = control
-    app.state.research_runtime = runtime or build_default_runtime(control)
+    app.state.repository = repository or getattr(runtime, "repository", None)
+    app.state.research_runtime = runtime or build_default_runtime(control, repository)
     app.include_router(research_router)
 
     @app.get("/health", response_model=HealthResponse)

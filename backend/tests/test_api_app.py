@@ -7,6 +7,7 @@ from pydantic import ValidationError
 
 from app.api.main import create_app
 from app.api.schemas import ResearchRequest
+from app.core.run_control import InMemoryRunControlStore
 
 
 class FakeRuntime:
@@ -61,6 +62,32 @@ class ApiAppTests(unittest.TestCase):
         self.assertIn('"query":"测试问题"', response.text)
         self.assertIn("event: research_completed\n", response.text)
         self.assertEqual(runtime.calls, [("测试问题", "api-session")])
+
+    def test_status_and_cancel_endpoints_use_run_control(self):
+        control = InMemoryRunControlStore()
+        control.start("status-session")
+        client = TestClient(create_app(run_control=control))
+
+        status = client.get("/api/research/status-session/status")
+        self.assertEqual(status.status_code, 200)
+        self.assertEqual(status.json()["status"], "running")
+
+        cancelled = client.post("/api/research/status-session/cancel")
+        self.assertEqual(cancelled.status_code, 200)
+        self.assertEqual(cancelled.json()["status"], "cancel_requested")
+
+    def test_status_and_cancel_return_not_found_for_unknown_run(self):
+        client = TestClient(create_app(run_control=InMemoryRunControlStore()))
+
+        self.assertEqual(client.get("/api/research/missing/status").status_code, 404)
+        self.assertEqual(client.post("/api/research/missing/cancel").status_code, 404)
+
+    def test_events_endpoint_requires_repository(self):
+        client = TestClient(create_app())
+
+        response = client.get("/api/research/session/events")
+
+        self.assertEqual(response.status_code, 503)
 
 
 

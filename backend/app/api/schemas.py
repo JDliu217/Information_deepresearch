@@ -23,3 +23,8 @@ class RunStatusResponse(BaseModel):
     iteration: int
     error: str | None = None
     updated_at: str
+
+
+class ResearchEventsResponse(BaseModel):
+    session_id: str
+    events: list[dict]

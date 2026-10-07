@@ -12,10 +12,12 @@ from app.core.run_control import InMemoryRunControlStore, RunControlStore
 from app.graph.runtime import ResearchGraphRuntime, create_research_runtime
 from app.core.llm_client import MockLLMClient
 from app.core.search_client import MockSearchClient
+from app.persistence.repository import ResearchRepository
 
 
 def build_default_runtime(
     run_control: RunControlStore | None = None,
+    repository: ResearchRepository | None = None,
 ) -> ResearchGraphRuntime:
     """建立不依赖外部服务的默认 runtime。"""
 
@@ -24,6 +26,7 @@ def build_default_runtime(
         MockLLMClient(),
         MockSearchClient(),
         run_control=control,
+        repository=repository,
     )
 
 
@@ -37,3 +40,9 @@ def get_run_control(request: Request) -> RunControlStore | None:
     """从应用状态获取运行控制存储。"""
 
     return request.app.state.run_control
+
+
+def get_repository(request: Request) -> ResearchRepository | None:
+    """从应用状态获取 PostgreSQL Repository。"""
+
+    return request.app.state.repository

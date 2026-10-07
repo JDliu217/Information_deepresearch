@@ -6,13 +6,14 @@ import json
 from collections.abc import AsyncIterator
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 
 from app.graph.runtime import ResearchGraphRuntime
+from app.persistence.repository import ResearchRepository
 
-from .dependencies import get_runtime
-from .schemas import ResearchRequest
+from .dependencies import get_repository, get_run_control, get_runtime
+from .schemas import ResearchEventsResponse, ResearchRequest, RunStatusResponse
 
 
 router = APIRouter(prefix="/api/research", tags=["research"])
@@ -54,4 +55,51 @@ async def research_stream(
             "X-Accel-Buffering": "no",
             "X-Research-Session-ID": session_id,
         },
+    )
+
+
+@router.get("/{session_id}/status", response_model=RunStatusResponse)
+async def research_status(
+    session_id: str,
+    run_control=Depends(get_run_control),
+) -> RunStatusResponse:
+    """读取 Redis 或内存中的运行摘要。"""
+
+    if run_control is None:
+        raise HTTPException(status_code=503, detail="运行控制存储未配置")
+    status = run_control.get(session_id)
+    if status is None:
+        raise HTTPException(status_code=404, detail="研究任务不存在")
+    return RunStatusResponse(**status.to_dict())
+
+
+@router.post("/{session_id}/cancel", response_model=RunStatusResponse)
+async def cancel_research(
+    session_id: str,
+    run_control=Depends(get_run_control),
+) -> RunStatusResponse:
+    """请求研究任务在下一个图节点边界停止。"""
+
+    if run_control is None:
+        raise HTTPException(status_code=503, detail="运行控制存储未配置")
+    if run_control.get(session_id) is None:
+        raise HTTPException(status_code=404, detail="研究任务不存在")
+    status = run_control.request_cancel(session_id)
+    return RunStatusResponse(**status.to_dict())
+
+
+@router.get("/{session_id}/events", response_model=ResearchEventsResponse)
+async def research_events(
+    session_id: str,
+    repository: ResearchRepository | None = Depends(get_repository),
+) -> ResearchEventsResponse:
+    """读取 PostgreSQL 中已经保存的研究事件。"""
+
+    if repository is None:
+        raise HTTPException(status_code=503, detail="研究 Repository 未配置")
+    if repository.load_state(session_id) is None:
+        raise HTTPException(status_code=404, detail="研究任务不存在")
+    return ResearchEventsResponse(
+        session_id=session_id,
+        events=repository.list_events(session_id),
     )
