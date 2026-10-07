@@ -38,6 +38,8 @@ IssueType = Literal[
     "incomplete",
 ]
 IssueSeverity = Literal["critical", "major", "minor"]
+FactCheckStatus = Literal["verified", "unverified", "suspicious", "false"]
+ReviewVerdict = Literal["pass", "needs_revision", "major_issues"]
 
 
 @dataclass
@@ -139,7 +141,41 @@ class CriticFeedback:
     severity: IssueSeverity
     description: str
     suggestion: str
+    location: str = ""
+    evidence: str = ""
+    requires_new_search: bool = False
+    search_query: str = ""
     resolved: bool = False
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
+class FactCheckResult:
+    """CriticMaster 对单条事实的核查结论。"""
+
+    fact_id: str
+    status: FactCheckStatus
+    reason: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
+class ReviewResult:
+    """一次完整的结构化报告审核结果。"""
+
+    verdict: ReviewVerdict
+    quality_score: float
+    summary: str = ""
+    issues: list[dict[str, Any]] = field(default_factory=list)
+    fact_check_results: list[dict[str, Any]] = field(default_factory=list)
+    missing_aspects: list[str] = field(default_factory=list)
+    strengths: list[str] = field(default_factory=list)
+    needs_more_research: bool = False
+    search_queries: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
