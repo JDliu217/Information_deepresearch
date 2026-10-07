@@ -95,6 +95,13 @@ class OpenAICompatibleLLMClient(LLMClient):
             "temperature": model_settings.temperature,
             "max_tokens": model_settings.max_tokens,
         }
+        if self._uses_deepseek(model_settings.model, self.settings.base_url):
+            thinking = self.settings.thinking_for(role)
+            request["extra_body"] = {"thinking": {"type": thinking}}
+            if thinking == "enabled":
+                reasoning_effort = self.settings.reasoning_effort_for(role)
+                if reasoning_effort != "none":
+                    request["reasoning_effort"] = reasoning_effort
         if json_mode:
             request["response_format"] = {"type": "json_object"}
 
@@ -123,6 +130,12 @@ class OpenAICompatibleLLMClient(LLMClient):
             attempts=attempts,
             detail=self._safe_error_detail(last_error),
         ) from last_error
+
+    @staticmethod
+    def _uses_deepseek(model: str, base_url: str) -> bool:
+        """Only send DeepSeek-specific request fields to a DeepSeek endpoint/model."""
+
+        return "deepseek" in model.lower() or "deepseek" in base_url.lower()
 
     def _get_client(self) -> Any:
         if self.client is None:

@@ -1,7 +1,11 @@
 import asyncio
+import os
 import unittest
 from types import SimpleNamespace
+from pathlib import Path
+from unittest.mock import patch
 
+from app.core import env as env_module
 from app.core.llm_config import AgentModelSettings, LLMSettings
 from app.core.openai_llm_client import LLMInvocationError, OpenAICompatibleLLMClient
 
@@ -78,6 +82,28 @@ class RealLLMClientTests(unittest.TestCase):
         values.update(kwargs)
         return LLMSettings(**values)
 
+    def test_settings_read_global_and_role_thinking_configuration(self):
+        with patch.object(env_module, "ENV_FILE", Path("missing-test.env")):
+            with patch.dict(
+                os.environ,
+                {
+                    "LLM_API_KEY": "test-key",
+                    "LLM_MODEL": "deepseek-chat",
+                    "LLM_THINKING": "enabled",
+                    "LLM_REASONING_EFFORT": "medium",
+                    "LLM_FACT_THINKING": "disabled",
+                },
+                clear=True,
+            ):
+                settings = LLMSettings.from_env()
+
+        self.assertEqual(settings.thinking, "enabled")
+        self.assertEqual(settings.reasoning_effort, "medium")
+        self.assertEqual(settings.thinking_for("planner"), "enabled")
+        self.assertEqual(settings.reasoning_effort_for("planner"), "medium")
+        self.assertEqual(settings.thinking_for("fact_extractor"), "disabled")
+        self.assertEqual(settings.reasoning_effort_for("fact_extractor"), "medium")
+
     def test_complete_json_sends_high_quality_structured_prompt(self):
         fake = FakeClient(['{"outline": [], "research_questions": [], "hypotheses": [], "key_entities": []}'])
         client = OpenAICompatibleLLMClient(self.settings(), client=fake)
@@ -90,6 +116,51 @@ class RealLLMClientTests(unittest.TestCase):
         self.assertEqual(request["response_format"], {"type": "json_object"})
         self.assertIn("假设", request["messages"][0]["content"])
         self.assertIn("search_queries", request["messages"][1]["content"])
+
+    def test_deepseek_thinking_disabled_does_not_send_reasoning_effort(self):
+        fake = FakeClient(['{"outline": []}'])
+        settings = self.settings(
+            base_url="https://api.deepseek.com",
+            thinking="disabled",
+            reasoning_effort="high",
+        )
+        client = OpenAICompatibleLLMClient(settings, client=fake)
+
+        asyncio.run(client.complete_json("planner", {"query": "测试"}))
+
+        request = fake.chat.completions.requests[0]
+        self.assertEqual(request["extra_body"], {"thinking": {"type": "disabled"}})
+        self.assertNotIn("reasoning_effort", request)
+
+    def test_deepseek_thinking_enabled_sends_configured_reasoning_effort(self):
+        fake = FakeClient(['{"outline": []}'])
+        settings = self.settings(
+            base_url="https://api.deepseek.com",
+            thinking="enabled",
+            reasoning_effort="low",
+        )
+        client = OpenAICompatibleLLMClient(settings, client=fake)
+
+        asyncio.run(client.complete_json("planner", {"query": "测试"}))
+
+        request = fake.chat.completions.requests[0]
+        self.assertEqual(request["extra_body"], {"thinking": {"type": "enabled"}})
+        self.assertEqual(request["reasoning_effort"], "low")
+
+    def test_non_deepseek_provider_does_not_receive_deepseek_parameters(self):
+        fake = FakeClient(['{"outline": []}'])
+        settings = self.settings(
+            base_url="https://api.openai.com/v1",
+            thinking="enabled",
+            reasoning_effort="high",
+        )
+        client = OpenAICompatibleLLMClient(settings, client=fake)
+
+        asyncio.run(client.complete_json("planner", {"query": "测试"}))
+
+        request = fake.chat.completions.requests[0]
+        self.assertNotIn("extra_body", request)
+        self.assertNotIn("reasoning_effort", request)
 
     def test_complete_text_extracts_report_field_from_json_response(self):
         fake = FakeClient(['{"full_report": "## 执行摘要\\n内容", "references": []}'])
