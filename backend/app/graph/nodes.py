@@ -37,6 +37,19 @@ class ResearchGraphNodes:
     writer: WriterAgent
     critic: CriticAgent
 
+    async def start(self, graph_state: ResearchGraphState) -> dict[str, Any]:
+        state = graph_state["research_state"]
+        return {
+            "events": [
+                self._event(
+                    state,
+                    "research_started",
+                    query=state.query,
+                    max_iterations=state.max_iterations,
+                )
+            ]
+        }
+
     async def plan(self, graph_state: ResearchGraphState) -> dict[str, Any]:
         state = graph_state["research_state"]
         events = [self._event(state, "phase_started", phase="planning", agent=self.planner.name)]
