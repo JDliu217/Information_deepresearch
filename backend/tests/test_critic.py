@@ -19,6 +19,15 @@ class BrokenCriticClient(LLMClient):
         return ""
 
 
+class LowScorePassClient(MockLLMClient):
+    async def complete_json(self, role, payload):
+        result = await super().complete_json(role, payload)
+        if role == "critic":
+            result["overall_assessment"]["quality_score"] = 5.0
+            result["quality_score"] = 5.0
+        return result
+
+
 class CriticAgentTests(unittest.TestCase):
     def test_critic_approves_source_grounded_report(self):
         async def run_chain():
@@ -48,6 +57,15 @@ class CriticAgentTests(unittest.TestCase):
     def test_critic_requires_report(self):
         with self.assertRaisesRegex(ValueError, "审核的报告"):
             asyncio.run(CriticAgent(MockLLMClient()).run(ResearchState("测试问题")))
+
+    def test_critic_rejects_pass_with_low_quality_score(self):
+        state = ResearchState("测试问题")
+        state.final_report = "## 报告\n内容 https://example.com"
+        state.facts = [{"content": "事实", "source_url": "https://example.com"}]
+        state.raw_sources = [{"url": "https://example.com"}]
+
+        with self.assertRaisesRegex(ValueError, "不能低于 7"):
+            asyncio.run(CriticAgent(LowScorePassClient()).run(state))
 
 
 if __name__ == "__main__":

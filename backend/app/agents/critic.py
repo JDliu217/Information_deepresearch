@@ -15,6 +15,7 @@ class CriticAgent(BaseAgent):
     """检查报告是否有事实、来源和基本的可发布条件。"""
 
     name = "critic"
+    minimum_pass_score = 7.0
 
     def __init__(self, llm: LLMClient):
         self.llm = llm
@@ -27,15 +28,12 @@ class CriticAgent(BaseAgent):
             role=self.name,
             payload={
                 "query": state.query,
-                "report": state.final_report,
-                "facts": state.facts,
-                "sources": state.raw_sources,
-                "data_points": state.data_points,
-                "insights": state.insights,
-                "charts": state.charts,
-                "code_executions": state.code_executions,
+                **self._build_review_context(state),
                 "iteration": state.iteration,
-                "instruction": "检查事实和数据洞察是否有来源支撑，并判断报告是否需要补充研究。",
+                "instruction": (
+                    "逐章检查报告是否覆盖大纲、每个事实和数据是否有来源、"
+                    "洞察是否由数据支撑、引用是否可追溯，并判断问题需要补充搜索还是文字修订。"
+                ),
             },
         )
         review = self._validate_review(result, state)
@@ -51,6 +49,42 @@ class CriticAgent(BaseAgent):
         state.quality_score = review["quality_score"]
         state.phase = "reviewing"
         return state
+
+    @staticmethod
+    def _build_review_context(state: ResearchState) -> dict[str, Any]:
+        """按章节整理审核输入，避免 Critic 只看到一整段报告。"""
+        sections = []
+        for index, raw_section in enumerate(state.outline, start=1):
+            section_id = str(raw_section.get("id", f"sec_{index}")).strip() or f"sec_{index}"
+            sections.append(
+                {
+                    "id": section_id,
+                    "title": str(raw_section.get("title", f"第 {index} 节")).strip(),
+                    "draft": state.draft_sections.get(section_id, ""),
+                    "facts": [
+                        fact
+                        for fact in state.facts
+                        if str(fact.get("section_id", "")).strip() == section_id
+                    ],
+                    "source_urls": [
+                        str(fact.get("source_url", "")).strip()
+                        for fact in state.facts
+                        if str(fact.get("section_id", "")).strip() == section_id
+                        and str(fact.get("source_url", "")).strip()
+                    ],
+                }
+            )
+        return {
+            "outline": state.outline,
+            "sections": sections,
+            "report": state.final_report,
+            "facts": state.facts,
+            "sources": state.raw_sources,
+            "data_points": state.data_points,
+            "insights": state.insights,
+            "charts": state.charts,
+            "code_executions": state.code_executions,
+        }
 
     @staticmethod
     def _validate_review(value: Any, state: ResearchState | None = None) -> dict[str, Any]:
@@ -75,6 +109,9 @@ class CriticAgent(BaseAgent):
             raise ValueError("Critic quality_score 必须是数字") from exc
         if not 0 <= quality_score <= 10:
             raise ValueError("Critic quality_score 必须在 0 到 10 之间")
+
+        if verdict == "pass" and quality_score < CriticAgent.minimum_pass_score:
+            raise ValueError("Critic verdict 为 pass 时 quality_score 不能低于 7")
 
         issues = CriticAgent._validate_issues(value.get("issues", []))
 
