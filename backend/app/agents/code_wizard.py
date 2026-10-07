@@ -5,8 +5,8 @@ from __future__ import annotations
 from typing import Any
 
 from app.core.llm_client import LLMClient
-from app.domain.models import CodeExecution
 from app.domain.state import ResearchState
+from app.execution.restricted_executor import RestrictedCodeExecutor
 
 from .base import BaseAgent
 
@@ -16,14 +16,19 @@ class CodeWizardAgent(BaseAgent):
 
     name = "code_wizard"
 
-    def __init__(self, llm: LLMClient):
+    def __init__(
+        self,
+        llm: LLMClient,
+        executor: RestrictedCodeExecutor | None = None,
+    ):
         self.llm = llm
+        self.executor = executor or RestrictedCodeExecutor()
 
     async def run(self, state: ResearchState) -> ResearchState:
         if not state.facts:
             raise ValueError("没有可供 CodeWizard 分析的事实")
         if not state.data_points:
-            raise ValueError("没有可供 CodeWizard 分析的数据点")
+            return state
 
         result = await self.llm.complete_json(
             role=self.name,
@@ -40,15 +45,26 @@ class CodeWizardAgent(BaseAgent):
             },
         )
         plan = self._validate_plan(result)
-        execution = CodeExecution(
-            id=f"exec_{len(state.code_executions) + 1}",
-            code=plan["code"],
-            result={
-                "purpose": plan["purpose"],
-                "expected_outputs": plan["expected_outputs"],
+        known_chart_ids = {str(chart.get("id", "")).strip() for chart in state.charts}
+        unknown_chart_ids = set(plan["chart_ids"]) - known_chart_ids
+        if unknown_chart_ids:
+            raise ValueError("CodeWizard 引用了不存在的图表 ID")
+        execution = self.executor.execute(
+            plan["code"],
+            {
+                "data_points": state.data_points,
+                "facts": state.facts,
+                "insights": state.insights,
+                "charts": state.charts,
             },
-            chart_ids=plan["chart_ids"],
+            execution_id=f"exec_{len(state.code_executions) + 1}",
         )
+        execution.result = {
+            "purpose": plan["purpose"],
+            "expected_outputs": plan["expected_outputs"],
+            "output": execution.result,
+        }
+        execution.chart_ids = plan["chart_ids"]
         state.code_executions.append(execution.to_dict())
         state.phase = "analyzing"
         return state

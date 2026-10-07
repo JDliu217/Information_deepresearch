@@ -61,7 +61,15 @@ EVENT_REQUIRED_FIELDS = {
         {"supplementary", "source_count", "fact_count", "sources", "facts", "references"}
     ),
     ResearchEventType.ANALYSIS_READY: frozenset(
-        {"insights", "data_points", "charts", "insight_count", "chart_count"}
+        {
+            "insights",
+            "data_points",
+            "charts",
+            "code_executions",
+            "insight_count",
+            "chart_count",
+            "code_execution_count",
+        }
     ),
     ResearchEventType.DRAFT_READY: frozenset(
         {"report", "outline", "draft_sections", "revision"}
@@ -79,6 +87,7 @@ EVENT_REQUIRED_FIELDS = {
             "insights",
             "data_points",
             "charts",
+            "code_executions",
         }
     ),
 }

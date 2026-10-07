@@ -179,8 +179,9 @@ class MockLLMClient(LLMClient):
                 "purpose": "根据已验证的数据点生成分析结果和图表产物。",
                 "code": (
                     "# CodeWizard 生成的待执行分析代码\n"
-                    f"data_point_count = {len(data_points)}\n"
-                    "print({'data_point_count': data_point_count})"
+                    "data_point_count = len(data_points)\n"
+                    "result = {'data_point_count': data_point_count}\n"
+                    "print(result)"
                 ),
                 "expected_outputs": ["analysis_summary"],
                 "chart_ids": chart_ids,

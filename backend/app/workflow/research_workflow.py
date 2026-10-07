@@ -6,6 +6,7 @@ from collections.abc import AsyncIterator
 from typing import Any
 from uuid import uuid4
 
+from app.agents.code_wizard import CodeWizardAgent
 from app.agents.critic import CriticAgent
 from app.agents.data_analyst import DataAnalystAgent
 from app.agents.fact_extractor import FactExtractorAgent
@@ -40,6 +41,7 @@ class ResearchWorkflow:
         self.researcher = ResearcherAgent(search, results_per_question)
         self.fact_extractor = FactExtractorAgent(llm)
         self.data_analyst = DataAnalystAgent(llm)
+        self.code_wizard = CodeWizardAgent(llm)
         self.writer = WriterAgent(llm)
         self.critic = CriticAgent(llm)
 
@@ -194,6 +196,7 @@ class ResearchWorkflow:
             insights=state.insights,
             data_points=state.data_points,
             charts=state.charts,
+            code_executions=state.code_executions,
         )
 
     async def _run_research_phase(
@@ -229,14 +232,17 @@ class ResearchWorkflow:
             agent=self.data_analyst.name,
         )
         await self.data_analyst.run(state)
+        await self.code_wizard.run(state)
         yield self._event(
             state,
             "analysis_ready",
             insights=state.insights,
             data_points=state.data_points,
             charts=state.charts,
+            code_executions=state.code_executions,
             insight_count=len(state.insights),
             chart_count=len(state.charts),
+            code_execution_count=len(state.code_executions),
         )
 
     @staticmethod

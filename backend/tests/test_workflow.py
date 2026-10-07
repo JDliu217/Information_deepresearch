@@ -59,6 +59,8 @@ class ResearchWorkflowTests(unittest.TestCase):
         self.assertEqual(len(state.insights), 1)
         self.assertEqual(len(state.data_points), 3)
         self.assertEqual(len(state.charts), 1)
+        self.assertEqual(len(state.code_executions), 1)
+        self.assertEqual(state.code_executions[0]["status"], "succeeded")
 
     def test_workflow_preserves_explicit_session_id(self):
         workflow = ResearchWorkflow(MockLLMClient(), MockSearchClient())
