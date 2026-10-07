@@ -140,10 +140,14 @@ class ResearchGraphRuntimeTests(unittest.TestCase):
         report_payloads = [
             payload for payload in llm.writer_payloads if payload.get("mode") == "report"
         ]
-        self.assertEqual(len(report_payloads), 2)
+        self.assertEqual(len(report_payloads), 1)
+        revision_payloads = [
+            payload for payload in llm.writer_payloads if payload.get("mode") == "revision"
+        ]
+        self.assertEqual(len(revision_payloads), 1)
         self.assertIn(
             "补充结论与证据之间的说明",
-            report_payloads[1]["review_result"]["issues"],
+            [issue["description"] for issue in revision_payloads[0]["feedback"]],
         )
         self.assertIn("补充结论与证据之间的说明", state.final_report)
 
@@ -164,7 +168,11 @@ class ResearchGraphRuntimeTests(unittest.TestCase):
         self.assertEqual(state.review_result["issues"], ["仍需改进"])
         self.assertEqual(
             len([payload for payload in llm.writer_payloads if payload.get("mode") == "report"]),
-            2,
+            1,
+        )
+        self.assertEqual(
+            len([payload for payload in llm.writer_payloads if payload.get("mode") == "revision"]),
+            1,
         )
 
     def test_workflow_allows_multiple_review_iterations(self):

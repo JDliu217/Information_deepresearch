@@ -302,6 +302,11 @@ class MockLLMClient(LLMClient):
                 )
             else:
                 lines.append("- 当前没有未解决的审核问题。")
+            for fact in payload.get("new_facts", []):
+                content = str(fact.get("content", "")).strip()
+                source_url = str(fact.get("source_url", "")).strip()
+                if content and source_url and content not in original:
+                    lines.append(f"- {content} ([来源]({source_url}))")
             return "\n".join(lines).strip()
 
         if payload.get("mode") == "report":

@@ -172,7 +172,10 @@ class ResearchGraphNodes:
     async def write(self, graph_state: ResearchGraphState) -> dict[str, Any]:
         state = deepcopy(graph_state["research_state"])
         revision = bool(graph_state.get("revision", False))
-        await self.writer.run(state)
+        if revision:
+            await self.writer.revise(state)
+        else:
+            await self.writer.run(state)
         return {
             "research_state": state,
             "events": [
