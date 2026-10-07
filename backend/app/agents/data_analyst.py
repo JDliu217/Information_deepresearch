@@ -15,6 +15,14 @@ class DataAnalystAgent(BaseAgent):
     """把事实和数据点转换成报告可以使用的分析结果。"""
 
     name = "data_analyst"
+    DATA_EXTRACTION_SYSTEM = """你是 DeepResearch 的数据分析 Agent。只使用输入中的事实和数据点，
+不创造数字或来源。区分描述性统计、相关性、因果关系和预测；任何洞察必须可追溯。"""
+    DATA_EXTRACTION_PROMPT = """请从已验证事实中提取结构化数据、时间序列、分布和有证据边界的洞察。
+如果数据不足，返回空数据或明确说明缺口。"""
+    KNOWLEDGE_GRAPH_PROMPT = """请根据事实内容生成知识图谱节点和关系。节点名称要稳定，关系必须能由
+事实直接支持；合并已有图谱时不要重复节点和边。"""
+    CHART_GENERATION_PROMPT = """请根据结构化数据生成必要的 ECharts 配置。时间序列用 line，分类比较
+用 bar，占比用 pie；数据不足时返回空 charts。series 必须非空，data_point_ids 必须引用已有数据点。"""
     allowed_chart_types = {
         "line",
         "bar",
@@ -33,18 +41,20 @@ class DataAnalystAgent(BaseAgent):
         if not state.facts:
             raise ValueError("没有可供数据分析的事实")
 
-        result = await self.llm.complete_json(
-            role=self.name,
-            payload={
-                "query": state.query,
-                "facts": state.facts,
-                "data_points": state.data_points,
-                "knowledge_graph": state.knowledge_graph,
-                "instruction": (
-                    "根据已有事实和数据点提炼可验证的洞察；如果有足够数据，"
-                    "生成一个或多个可直接交给 ECharts 的配置。不要编造来源中不存在的数据。"
-                ),
-            },
+        payload = {
+            "query": state.query,
+            "facts": state.facts,
+            "data_points": state.data_points,
+            "knowledge_graph": state.knowledge_graph,
+            "instruction": (
+                "根据已有事实和数据点提炼可验证的洞察；如果有足够数据，"
+                "生成一个或多个可直接交给 ECharts 的配置。不要编造来源中不存在的数据。"
+            ),
+        }
+        result = await self._complete_json(
+            payload,
+            system_prompt=self.DATA_EXTRACTION_SYSTEM,
+            user_prompt=self._render_prompt(self.DATA_EXTRACTION_PROMPT, payload),
         )
         insights, charts = self._validate_result(result)
         state.insights = self._merge_insights(state.insights, insights)

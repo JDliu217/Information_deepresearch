@@ -7,8 +7,6 @@ import json
 import re
 from typing import Any
 
-from app.prompts import build_prompt
-
 from .llm_client import LLMClient
 from .llm_config import LLMSettings
 
@@ -52,8 +50,16 @@ class OpenAICompatibleLLMClient(LLMClient):
         self,
         role: str,
         payload: dict[str, Any],
+        system_prompt: str = "",
+        user_prompt: str = "",
     ) -> dict[str, Any]:
-        content = await self._complete(role, payload, json_mode=True)
+        content = await self._complete(
+            role,
+            payload,
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            json_mode=True,
+        )
         parsed = self._parse_json(content)
         if not isinstance(parsed, dict):
             raise ValueError(f"真实 LLM 的 {role} 返回结果必须是 JSON 对象")
@@ -63,8 +69,16 @@ class OpenAICompatibleLLMClient(LLMClient):
         self,
         role: str,
         payload: dict[str, Any],
+        system_prompt: str = "",
+        user_prompt: str = "",
     ) -> str:
-        content = await self._complete(role, payload, json_mode=False)
+        content = await self._complete(
+            role,
+            payload,
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            json_mode=False,
+        )
         parsed = self._try_parse_json(content)
         if isinstance(parsed, dict):
             mode = payload.get("mode")
@@ -82,10 +96,15 @@ class OpenAICompatibleLLMClient(LLMClient):
         role: str,
         payload: dict[str, Any],
         *,
+        system_prompt: str,
+        user_prompt: str,
         json_mode: bool,
     ) -> str:
-        system_prompt, user_prompt = build_prompt(role, payload)
         model_settings = self.settings.for_agent(role)
+        # Prompt selection belongs to each Agent. Empty prompts remain accepted
+        # for low-level compatibility; production Agent calls always provide both.
+        if not user_prompt.strip():
+            user_prompt = json.dumps(payload, ensure_ascii=False, default=str)
         request: dict[str, Any] = {
             "model": model_settings.model,
             "messages": [

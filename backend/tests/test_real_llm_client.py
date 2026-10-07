@@ -108,7 +108,14 @@ class RealLLMClientTests(unittest.TestCase):
         fake = FakeClient(['{"outline": [], "research_questions": [], "hypotheses": [], "key_entities": []}'])
         client = OpenAICompatibleLLMClient(self.settings(), client=fake)
 
-        result = asyncio.run(client.complete_json("planner", {"query": "新能源汽车"}))
+        result = asyncio.run(
+            client.complete_json(
+                "planner",
+                {"query": "新能源汽车"},
+                system_prompt="你是研究规划 Agent，必须输出假设。",
+                user_prompt='请返回包含 search_queries 的 JSON。',
+            )
+        )
 
         request = fake.chat.completions.requests[0]
         self.assertEqual(result["outline"], [])

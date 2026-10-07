@@ -18,6 +18,8 @@ class LLMClient(ABC):
         self,
         role: str,
         payload: dict[str, Any],
+        system_prompt: str = "",
+        user_prompt: str = "",
     ) -> dict[str, Any]:
         """让模型返回结构化 JSON 数据。"""
         raise NotImplementedError
@@ -27,6 +29,8 @@ class LLMClient(ABC):
         self,
         role: str,
         payload: dict[str, Any],
+        system_prompt: str = "",
+        user_prompt: str = "",
     ) -> str:
         """让模型返回普通文本。"""
         raise NotImplementedError
@@ -43,6 +47,8 @@ class MockLLMClient(LLMClient):
         self,
         role: str,
         payload: dict[str, Any],
+        system_prompt: str = "",
+        user_prompt: str = "",
     ) -> dict[str, Any]:
         if role == "planner":
             query = str(payload.get("query", "")).strip()
@@ -243,6 +249,8 @@ class MockLLMClient(LLMClient):
         self,
         role: str,
         payload: dict[str, Any],
+        system_prompt: str = "",
+        user_prompt: str = "",
     ) -> str:
         if role != "writer":
             raise ValueError(f"MockLLMClient 暂时不支持文本角色: {role}")

@@ -12,6 +12,14 @@ class WriterAgent(BaseAgent):
     """按章节整理事实，并生成带来源的 Markdown 报告。"""
 
     name = "writer"
+    SECTION_WRITING_SYSTEM = """你是 DeepResearch 的专业行业研究写作 Agent。只能使用输入事实、数据、洞察
+和来源；不能补写没有证据的数字或 URL。章节正文要区分事实、分析和判断，关键事实保留可点击来源。"""
+    SECTION_WRITING_PROMPT = """请完成一个研究章节的写作任务。只生成章节正文，不重复章节标题；每个关键
+事实保留输入中的来源链接，图表引用已有图表 ID。"""
+    SYNTHESIS_PROMPT = """请整合全部章节草稿为完整研究报告，包含执行摘要、研究发现、数据洞察（若有）、
+结论、展望和参考文献。保持逻辑连贯、引用可追溯，结论强度不能超过证据。"""
+    REVISION_PROMPT = """请根据审核问题修订当前报告。只处理输入中列出的审核问题，保留正确事实和来源，
+并说明已处理及无法处理的问题。"""
 
     def __init__(self, llm: LLMClient):
         self.llm = llm
@@ -44,21 +52,23 @@ class WriterAgent(BaseAgent):
             related_facts = self._facts_for_section(state.facts, section_id)
             if index == 1 and unassigned_facts:
                 related_facts = self._merge_facts(related_facts, unassigned_facts)
-            section_content = await self.llm.complete_text(
-                role=self.name,
-                payload={
-                    "mode": "section",
-                    "query": state.query,
-                    "section": section,
-                    "facts": related_facts,
-                    "data_points": state.data_points,
-                    "insights": state.insights,
-                    "charts": state.charts,
-                    "code_executions": state.code_executions,
-                    "review_result": state.review_result,
-                    "iteration": state.iteration,
-                    "instruction": "只生成本章节正文，不要重复章节标题；每个事实都保留可点击来源链接。",
-                },
+            section_payload = {
+                "mode": "section",
+                "query": state.query,
+                "section": section,
+                "facts": related_facts,
+                "data_points": state.data_points,
+                "insights": state.insights,
+                "charts": state.charts,
+                "code_executions": state.code_executions,
+                "review_result": state.review_result,
+                "iteration": state.iteration,
+                "instruction": "只生成本章节正文，不要重复章节标题；每个事实都保留可点击来源链接。",
+            }
+            section_content = await self._complete_text(
+                section_payload,
+                system_prompt=self.SECTION_WRITING_SYSTEM,
+                user_prompt=self._render_prompt(self.SECTION_WRITING_PROMPT, section_payload),
             )
             section_content = section_content.strip()
             if not section_content:
@@ -68,23 +78,25 @@ class WriterAgent(BaseAgent):
             draft_sections[section_id] = section_content
             normalized_outline.append(section)
 
-        report = await self.llm.complete_text(
-            role=self.name,
-            payload={
-                "mode": "report",
-                "query": state.query,
-                "outline": normalized_outline,
-                "facts": state.facts,
-                "draft_sections": draft_sections,
-                "data_points": state.data_points,
-                "insights": state.insights,
-                "charts": state.charts,
-                "code_executions": state.code_executions,
-                "references": state.references,
-                "review_result": state.review_result,
-                "iteration": state.iteration,
-                "instruction": "整合各章节草稿，生成带 Markdown 标题和可点击来源链接的研究报告；若有审核意见，逐条处理。",
-            },
+        report_payload = {
+            "mode": "report",
+            "query": state.query,
+            "outline": normalized_outline,
+            "facts": state.facts,
+            "draft_sections": draft_sections,
+            "data_points": state.data_points,
+            "insights": state.insights,
+            "charts": state.charts,
+            "code_executions": state.code_executions,
+            "references": state.references,
+            "review_result": state.review_result,
+            "iteration": state.iteration,
+            "instruction": "整合各章节草稿，生成带 Markdown 标题和可点击来源链接的研究报告；若有审核意见，逐条处理。",
+        }
+        report = await self._complete_text(
+            report_payload,
+            system_prompt=self.SECTION_WRITING_SYSTEM,
+            user_prompt=self._render_prompt(self.SYNTHESIS_PROMPT, report_payload),
         )
         report = report.strip()
         if not report:
