@@ -22,6 +22,7 @@ from app.agents.writer import WriterAgent
 from app.core.llm_client import LLMClient
 from app.core.search_client import SearchClient
 from app.domain.state import ResearchState
+from app.persistence.repository import ResearchRepository
 
 from .nodes import ResearchGraphNodes
 from .research_graph import build_research_graph
@@ -34,6 +35,7 @@ class ResearchGraphRuntime:
 
     graph: Any
     max_iterations: int = 1
+    repository: ResearchRepository | None = None
 
     async def run(
         self,
@@ -41,11 +43,12 @@ class ResearchGraphRuntime:
         session_id: str | None = None,
     ) -> ResearchState:
         state = self._new_state(query, session_id)
-        result = await self.graph.ainvoke(
-            initial_graph_state(state),
-            config=self._graph_config(),
-        )
-        return result["research_state"]
+        if self.repository is not None:
+            self.repository.save_state(state)
+        latest_state = state
+        async for node_update in self._stream_updates(state):
+            latest_state = self._persist_update(node_update, latest_state)
+        return latest_state
 
     async def stream(
         self,
@@ -53,6 +56,19 @@ class ResearchGraphRuntime:
         session_id: str | None = None,
     ) -> AsyncIterator[dict[str, Any]]:
         state = self._new_state(query, session_id)
+        if self.repository is not None:
+            self.repository.save_state(state)
+        async for node_update in self._stream_updates(state):
+            self._persist_update(node_update, state)
+            events = node_update.get("events", [])
+            if isinstance(events, list):
+                async for event in from_events(events):
+                    yield event
+
+    async def _stream_updates(
+        self,
+        state: ResearchState,
+    ) -> AsyncIterator[dict[str, Any]]:
         async for update in self.graph.astream(
             initial_graph_state(state),
             config=self._graph_config(),
@@ -61,12 +77,25 @@ class ResearchGraphRuntime:
             if not isinstance(update, dict):
                 continue
             for node_update in update.values():
-                if not isinstance(node_update, dict):
-                    continue
-                events = node_update.get("events", [])
-                if isinstance(events, list):
-                    async for event in from_events(events):
-                        yield event
+                if isinstance(node_update, dict):
+                    yield node_update
+
+    def _persist_update(
+        self,
+        node_update: dict[str, Any],
+        latest_state: ResearchState,
+    ) -> ResearchState:
+        state = node_update.get("research_state", latest_state)
+        if isinstance(state, ResearchState):
+            latest_state = state
+            if self.repository is not None:
+                self.repository.save_state(state)
+        events = node_update.get("events", [])
+        if self.repository is not None and isinstance(events, list):
+            self.repository.append_events(
+                event for event in events if isinstance(event, dict)
+            )
+        return latest_state
 
     def _new_state(self, query: str, session_id: str | None) -> ResearchState:
         return ResearchState(
@@ -96,6 +125,7 @@ def create_research_runtime(
     *,
     results_per_question: int = 3,
     max_iterations: int = 1,
+    repository: ResearchRepository | None = None,
 ) -> ResearchGraphRuntime:
     """创建唯一的 V2 LangGraph 运行实例。"""
 
@@ -113,4 +143,5 @@ def create_research_runtime(
     return ResearchGraphRuntime(
         graph=build_research_graph(nodes),
         max_iterations=max_iterations,
+        repository=repository,
     )
