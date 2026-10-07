@@ -109,6 +109,26 @@ class CapturingFactClient(LLMClient):
         return ""
 
 
+class FollowUpFactClient(LLMClient):
+    async def complete_json(self, role, payload):
+        source = payload["sources"][0]
+        return {
+            "extracted_facts": [
+                {
+                    "content": "需要追溯来源的事实。",
+                    "source_name": source["source"],
+                    "source_url": source["url"],
+                    "credibility_score": 0.8,
+                }
+            ],
+            "source_tracing_queries": ["原始统计来源"],
+            "follow_up_queries": ["补充年度数据"],
+        }
+
+    async def complete_text(self, role, payload):
+        return ""
+
+
 class FactExtractorAgentTests(unittest.TestCase):
     def test_fact_extractor_calls_once_per_section_with_reference_limits(self):
         class CapturingClient(LLMClient):
@@ -183,6 +203,24 @@ class FactExtractorAgentTests(unittest.TestCase):
         self.assertEqual(len(sent_content), FactExtractorAgent.default_max_source_chars)
         self.assertTrue(sent_content.startswith("前文"))
         self.assertGreater(len(state.raw_sources[0]["content"]), len(sent_content))
+
+    def test_fact_extractor_queues_source_tracing_and_follow_up_queries(self):
+        state = ResearchState("测试问题")
+        state.raw_sources = [
+            {
+                "title": "来源",
+                "url": "https://example.com/source",
+                "source": "测试站点",
+                "summary": "摘要",
+            }
+        ]
+
+        asyncio.run(FactExtractorAgent(FollowUpFactClient()).run(state))
+
+        self.assertEqual(
+            state.pending_search_queries,
+            ["原始统计来源", "补充年度数据"],
+        )
 
     def test_fact_extractor_turns_raw_sources_into_facts(self):
         async def run_chain():

@@ -14,10 +14,13 @@ def select_research_batch_route(graph_state: ResearchGraphState) -> str:
     """Continue initial search until every planned section has been researched."""
 
     state = graph_state["research_state"]
-    if any(section.get("status", "pending") == "pending" for section in state.outline):
-        return "search"
+    # FactExtractor queues source-tracing and follow-up queries. Execute those
+    # recursive searches before moving to another outline batch, matching the
+    # reference DeepScout flow where each section is deepened immediately.
     if state.pending_search_queries and state.iteration < state.max_iterations:
         return "follow_up"
+    if any(section.get("status", "pending") == "pending" for section in state.outline):
+        return "search"
     return "analyze"
 
 
