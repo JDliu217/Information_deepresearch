@@ -27,9 +27,26 @@ class SequencedReviewLLM(MockLLMClient):
             return next(self.reviews)
         return await super().complete_json(role, payload)
 
-    async def complete_text(self, role, payload):
+    async def complete_text(
+        self,
+        role,
+        payload,
+        system_prompt="",
+        user_prompt="",
+        temperature=None,
+        max_tokens=None,
+        json_mode=False,
+    ):
         self.writer_payloads.append(payload)
-        return await super().complete_text(role, payload)
+        return await super().complete_text(
+            role,
+            payload,
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            json_mode=json_mode,
+        )
 
 
 class StructuredRoutingLLM(SequencedReviewLLM):
@@ -103,7 +120,13 @@ class ResearchGraphRuntimeTests(unittest.TestCase):
                 review(
                     "needs_revision",
                     more_research=True,
-                    issues=["补充最新行业数据"],
+                    issues=[{
+                        "issue_type": "outdated",
+                        "severity": "major",
+                        "description": "补充最新行业数据",
+                        "requires_new_search": True,
+                        "search_query": "2025年新能源汽车行业数据",
+                    }],
                     search_queries=["2025年新能源汽车行业数据"],
                 ),
                 review("pass", score=8.0),
