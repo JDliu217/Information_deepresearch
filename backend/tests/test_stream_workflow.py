@@ -74,12 +74,29 @@ class PausedWriterLLM(MockLLMClient):
         self.release_writer = asyncio.Event()
         self.paused = False
 
-    async def complete_text(self, role, payload, system_prompt="", user_prompt=""):
+    async def complete_text(
+        self,
+        role,
+        payload,
+        system_prompt="",
+        user_prompt="",
+        temperature=None,
+        max_tokens=None,
+        json_mode=False,
+    ):
         if role == "writer" and payload.get("mode") == "section" and not self.paused:
             self.paused = True
             self.writer_started.set()
             await self.release_writer.wait()
-        return await super().complete_text(role, payload, system_prompt, user_prompt)
+        return await super().complete_text(
+            role,
+            payload,
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            json_mode=json_mode,
+        )
 
 
 async def collect_events(workflow, query, session_id=None):
@@ -324,7 +341,15 @@ class GraphRuntimeStreamTests(unittest.TestCase):
                 review(
                     "needs_revision",
                     more_research=True,
-                    issues=["补充最新行业数据"],
+                    issues=[
+                        {
+                            "issue_type": "outdated",
+                            "severity": "major",
+                            "description": "缺少最新行业数据",
+                            "requires_new_search": True,
+                            "search_query": "2025年新能源汽车行业数据",
+                        }
+                    ],
                     search_queries=["2025年新能源汽车行业数据"],
                 ),
                 review("pass", score=8.0),
