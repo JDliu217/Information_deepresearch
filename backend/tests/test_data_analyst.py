@@ -12,6 +12,10 @@ from app.domain.state import ResearchState
 
 class InvalidAnalysisClient(LLMClient):
     async def complete_json(self, role, payload):
+        if payload["mode"] == "data_extraction":
+            return {"data_points": [{"name": "指标", "value": 1}], "insights": []}
+        if payload["mode"] == "knowledge_graph":
+            return {"nodes": [], "edges": []}
         return {
             "insights": ["有效洞察"],
             "charts": [
@@ -31,18 +35,20 @@ class InvalidAnalysisClient(LLMClient):
 class CapturingAnalysisClient(LLMClient):
     def __init__(self):
         self.payloads = []
+        self.prompts = []
 
-    async def complete_json(self, role, payload):
+    async def complete_json(self, role, payload, system_prompt="", user_prompt=""):
         self.payloads.append(payload)
+        self.prompts.append((system_prompt, user_prompt))
         if payload.get("mode") == "data_extraction":
             return {
-                "data_points": [{"name": "规模", "value": 10, "unit": "亿元", "year": 2024}],
+                "data_points": [{"id": "dp-1", "name": "规模", "value": 10, "unit": "亿元", "year": 2024, "category": "market_size"}],
                 "time_series": [],
                 "distributions": [],
                 "insights": ["规模保持增长"],
             }
         if payload.get("mode") == "knowledge_graph":
-            return {"nodes": [{"id": "industry", "name": "行业", "type": "core"}], "edges": []}
+            return {"nodes": [{"id": "industry", "name": "行业", "type": "core", "importance": 8}], "edges": []}
         return {
             "charts": [{
                 "id": "chart-1",
@@ -72,7 +78,89 @@ class DataAnalystAgentTests(unittest.TestCase):
             ["data_extraction", "knowledge_graph", "chart_generation"],
         )
         self.assertEqual(len(state.knowledge_graph["nodes"]), 1)
+        self.assertEqual(state.knowledge_graph["nodes"][0]["size"], 44)
         self.assertEqual(len(state.charts), 1)
+        self.assertEqual(state.data_points[0]["category"], "market_size")
+        self.assertIn("从以上搜索结果中提取所有可量化的数据点", client.prompts[0][1])
+        self.assertIn("实体类型定义", client.prompts[1][1])
+        self.assertIn("时间序列数据 → line (折线图)", client.prompts[2][1])
+        self.assertIn("事实 (来源: 未知)", client.payloads[0]["search_results"])
+        self.assertEqual(client.payloads[1]["content"], "事实")
+        self.assertEqual(
+            client.payloads[2]["data"]["existing_data_points"][0]["id"],
+            "dp-1",
+        )
+
+    def test_data_analyst_merges_its_graph_without_replacing_fact_extractor_graph(self):
+        class GraphAnalysisClient(LLMClient):
+            async def complete_json(self, role, payload, system_prompt="", user_prompt=""):
+                if payload["mode"] == "data_extraction":
+                    return {
+                        "data_points": [],
+                        "time_series": [],
+                        "distributions": [],
+                        "insights": [],
+                    }
+                if payload["mode"] == "knowledge_graph":
+                    return {
+                        "nodes": [
+                            {
+                                "id": "analyst-existing",
+                                "name": "已有实体",
+                                "type": "company",
+                                "importance": 9,
+                            },
+                            {
+                                "id": "node_0",
+                                "name": "新增实体",
+                                "type": "product",
+                                "importance": 7,
+                            },
+                        ],
+                        "edges": [
+                            {
+                                "source": "analyst-existing",
+                                "target": "node_0",
+                                "relation": "推出",
+                            }
+                        ],
+                    }
+                raise AssertionError("没有结构化数据时不应请求图表生成")
+
+            async def complete_text(self, role, payload, system_prompt="", user_prompt=""):
+                return ""
+
+        state = ResearchState("测试问题")
+        state.facts = [{"content": "已有实体发布新产品", "source_url": "https://example.com"}]
+        state.knowledge_graph = {
+            "nodes": [
+                {
+                    "id": "node_0",
+                    "name": "已有实体",
+                    "type": "industry",
+                    "relations": ["受市场影响"],
+                }
+            ],
+            "edges": [{"source": "已有实体", "relation": "受市场影响"}],
+        }
+
+        asyncio.run(DataAnalystAgent(GraphAnalysisClient()).run(state))
+
+        nodes_by_name = {node["name"]: node for node in state.knowledge_graph["nodes"]}
+        self.assertEqual(set(nodes_by_name), {"已有实体", "新增实体"})
+        self.assertEqual(nodes_by_name["已有实体"]["type"], "industry")
+        self.assertEqual(nodes_by_name["已有实体"]["relations"], ["受市场影响"])
+        self.assertEqual(nodes_by_name["已有实体"]["importance"], 9)
+        self.assertEqual(nodes_by_name["新增实体"]["id"], "node_0_data_analyst")
+        self.assertEqual(len(state.knowledge_graph["edges"]), 2)
+        self.assertEqual(
+            state.knowledge_graph["edges"][1],
+            {
+                "source": "node_0",
+                "target": "node_0_data_analyst",
+                "relation": "推出",
+            },
+        )
 
     def test_data_analyst_generates_insights_and_echarts_config(self):
         async def run_chain():
@@ -81,7 +169,7 @@ class DataAnalystAgentTests(unittest.TestCase):
             await PlannerAgent(llm).run(state)
             await ResearcherAgent(MockSearchClient()).run(state)
             await FactExtractorAgent(llm).run(state)
-            await DataAnalystAgent(llm).run(state)
+            await DataAnalystAgent(CapturingAnalysisClient()).run(state)
             return state
 
         state = asyncio.run(run_chain())
@@ -91,29 +179,29 @@ class DataAnalystAgentTests(unittest.TestCase):
         self.assertEqual(len(state.charts), 1)
         chart = state.charts[0]
         self.assertEqual(chart["chart_type"], "bar")
-        self.assertEqual(chart["data"]["data_point_ids"], ["dp_1", "dp_2", "dp_3"])
+        self.assertEqual(chart["data"]["data_point_ids"], ["dp-1"])
         self.assertEqual(chart["echarts_option"]["series"][0]["type"], "bar")
         self.assertEqual(
             chart["echarts_option"]["series"][0]["data"],
-            [10, 10, 10],
+            [10],
         )
 
-    def test_data_analyst_upserts_same_chart_and_deduplicates_insight(self):
+    def test_data_analyst_appends_results_like_reference(self):
         async def run():
             state = ResearchState("测试问题")
             state.facts = [{"content": "事实", "source_url": "https://example.com"}]
             state.data_points = [
                 {"id": "dp-1", "name": "指标", "value": 10, "year": 2024}
             ]
-            agent = DataAnalystAgent(MockLLMClient())
+            agent = DataAnalystAgent(CapturingAnalysisClient())
             await agent.run(state)
             await agent.run(state)
             return state
 
         state = asyncio.run(run())
 
-        self.assertEqual(len(state.insights), 1)
-        self.assertEqual(len(state.charts), 1)
+        self.assertEqual(len(state.insights), 2)
+        self.assertEqual(len(state.charts), 2)
 
     def test_data_analyst_rejects_invalid_echarts_series(self):
         state = ResearchState("测试问题")
@@ -125,16 +213,53 @@ class DataAnalystAgentTests(unittest.TestCase):
 
     def test_data_analyst_allows_facts_without_data_points(self):
         async def run():
+            class EmptyAnalysisClient(LLMClient):
+                async def complete_json(self, role, payload):
+                    if payload["mode"] == "data_extraction":
+                        return {
+                            "data_points": [],
+                            "time_series": [],
+                            "distributions": [],
+                            "insights": [],
+                        }
+                    return {"nodes": [], "edges": []}
+
+                async def complete_text(self, role, payload):
+                    return ""
+
             state = ResearchState("测试问题")
             state.facts = [{"content": "定性事实", "source_url": "https://example.com"}]
-            await DataAnalystAgent(MockLLMClient()).run(state)
+            await DataAnalystAgent(EmptyAnalysisClient()).run(state)
             return state
 
         state = asyncio.run(run())
 
         self.assertEqual(state.phase, "analyzing")
-        self.assertEqual(state.insights, [])
         self.assertEqual(state.charts, [])
+
+    def test_data_analyst_uses_reference_fact_limits_and_skips_chart_without_extracted_data(self):
+        class EmptyAnalysisClient(CapturingAnalysisClient):
+            async def complete_json(self, role, payload, system_prompt="", user_prompt=""):
+                self.payloads.append(payload)
+                self.prompts.append((system_prompt, user_prompt))
+                if payload["mode"] == "data_extraction":
+                    return {"data_points": [], "time_series": [], "distributions": [], "insights": []}
+                return {"nodes": [], "edges": []}
+
+        state = ResearchState("测试问题")
+        state.facts = [
+            {"content": f"事实 {index}", "source_name": f"来源 {index}"}
+            for index in range(25)
+        ]
+        state.data_points = [{"id": "existing", "name": "旧指标", "value": 1}]
+        client = EmptyAnalysisClient()
+        asyncio.run(DataAnalystAgent(client).run(state))
+
+        self.assertEqual([item["mode"] for item in client.payloads], ["data_extraction", "knowledge_graph"])
+        self.assertIn("事实 19", client.payloads[0]["search_results"])
+        self.assertNotIn("事实 20", client.payloads[0]["search_results"])
+        self.assertIn("事实 14", client.payloads[1]["content"])
+        self.assertNotIn("事实 15", client.payloads[1]["content"])
 
 
 if __name__ == "__main__":
