@@ -7,10 +7,29 @@ from app.domain.state import ResearchState
 
 
 class BrokenPlannerClient(LLMClient):
-    async def complete_json(self, role, payload):
-        return {"outline": [], "research_questions": []}
+    def __init__(self):
+        self.calls = []
+        self.responses = [
+            {"outline": [], "research_questions": []},
+            {"outline": ["not a section"] * 3, "research_questions": []},
+            {"outline": [], "research_questions": []},
+        ]
 
-    async def complete_text(self, role, payload):
+    async def complete_json(
+        self, role, payload, system_prompt="", user_prompt="", temperature=None, max_tokens=None
+    ):
+        self.calls.append({
+            "role": role,
+            "payload": payload,
+            "system_prompt": system_prompt,
+            "user_prompt": user_prompt,
+        })
+        return self.responses[len(self.calls) - 1]
+
+    async def complete_text(
+        self, role, payload, system_prompt="", user_prompt="", temperature=None,
+        max_tokens=None, json_mode=False
+    ):
         return ""
 
 
@@ -54,6 +73,7 @@ class PlannerAgentTests(unittest.TestCase):
             async def complete_json(self, role, payload, system_prompt="", user_prompt=""):
                 if payload.get("current_outline"):
                     self.assert_revision_payload = payload
+                    self.assert_revision_system_prompt = system_prompt
                     return {
                         "needs_revision": False,
                         "new_search_queries": ["缺口查询", "缺口查询"],
@@ -72,6 +92,11 @@ class PlannerAgentTests(unittest.TestCase):
         self.assertEqual(state.pending_search_queries, [])
         self.assertEqual(client.assert_revision_payload["completed_sections"], 0)
         self.assertIn("新发现", client.assert_revision_payload["new_findings"])
+        self.assertEqual(
+            client.assert_revision_system_prompt,
+            "你是总架构师，需要判断是否需要调整研究计划。",
+        )
+
     def test_planner_writes_outline_into_state(self):
         state = ResearchState("中国新能源汽车行业的发展趋势是什么？")
         agent = PlannerAgent(MockLLMClient())
@@ -92,9 +117,19 @@ class PlannerAgentTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             asyncio.run(PlannerAgent(MockLLMClient()).run(ResearchState("   ")))
 
-    def test_planner_rejects_invalid_llm_result(self):
-        with self.assertRaisesRegex(ValueError, "非空列表"):
-            asyncio.run(PlannerAgent(BrokenPlannerClient()).run(ResearchState("测试问题")))
+    def test_planner_records_error_after_three_invalid_plans(self):
+        state = ResearchState("测试问题")
+        client = BrokenPlannerClient()
+
+        result = asyncio.run(PlannerAgent(client).run(state))
+
+        self.assertIs(result, state)
+        self.assertEqual(len(client.calls), 3)
+        self.assertEqual(state.errors, ["Failed to generate research plan after retries"])
+        self.assertEqual(state.phase, "init")
+        retry_prompt = client.calls[1]["user_prompt"]
+        self.assertIn('"key_entities": []', retry_prompt)
+        self.assertNotIn('"hypotheses"', retry_prompt)
 
 
 if __name__ == "__main__":

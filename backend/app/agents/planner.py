@@ -25,6 +25,7 @@ class PlannerAgent(BaseAgent):
         "你是一位专业的行业研究规划师。请严格按照要求的 JSON 格式输出，"
         "不要添加任何额外内容。"
     )
+    REVISION_SYSTEM = "你是总架构师，需要判断是否需要调整研究计划。"
     PLANNING_PROMPT = r"""研究课题：{query}
 
 请为该课题生成研究大纲和研究假设，输出JSON格式如下：
@@ -60,18 +61,15 @@ class PlannerAgent(BaseAgent):
 - 假设政策变化会影响行业格局，需要分析政策走向
 
 请根据研究课题填写具体内容，每个字段都是字符串类型。"""
-    PLANNING_RETRY_PROMPT = """请为“{query}”生成研究大纲，只返回 JSON：
-{{
-  "outline": [
-    {{"id":"sec_1","title":"章节标题","description":"章节要回答的问题",
-      "section_type":"mixed","requires_data":true,"requires_chart":false,
-      "search_queries":["关键词1","关键词2"]}}
-  ],
-  "research_questions":["问题1","问题2","问题3"],
-  "hypotheses":[{{"id":"h_1","content":"待验证假设","status":"unverified"}}],
-  "key_entities":[]
-}}
-要求 outline 包含 5 到 8 个章节，覆盖课题的现状、竞争、技术、政策和未来趋势。"""
+    PLANNING_RETRY_PROMPT = """请为"{query}"生成研究大纲。
+
+输出JSON格式：
+{{"outline": [
+    {{"id": "sec_1", "title": "章节标题", "description": "描述", "section_type": "mixed", "requires_data": true, "requires_chart": false, "search_queries": ["关键词1", "关键词2"]}},
+    ...更多章节(共5-8个)...
+], "research_questions": ["问题1", "问题2", "问题3"], "key_entities": []}}
+
+要求：outline必须包含5-8个章节，覆盖市场概况、企业竞争、技术趋势、政策环境、未来展望等方面。"""
     REVISION_PROMPT = r"""你是总架构师，需要根据研究进展动态调整大纲。
 
 ## 原始问题
@@ -115,6 +113,7 @@ class PlannerAgent(BaseAgent):
             raise ValueError("研究问题不能为空")
 
         result: dict[str, Any] = {}
+        validated_outline: list[dict[str, Any]] | None = None
         prompt = self.PLANNING_PROMPT.format(query=query)
         for attempt in range(3):
             payload = {"query": query}
@@ -127,16 +126,22 @@ class PlannerAgent(BaseAgent):
             )
             if result.get("sec_1_title") and not result.get("outline"):
                 result = self._convert_flat_to_outline(result)
-            if isinstance(result.get("outline"), list) and len(result["outline"]) >= 3:
-                break
+            outline_value = result.get("outline")
+            if isinstance(outline_value, list) and len(outline_value) >= 3:
+                try:
+                    validated_outline = self._validate_outline(outline_value)
+                except ValueError:
+                    validated_outline = None
+                if validated_outline is not None and len(validated_outline) >= 3:
+                    break
             if attempt < 2:
                 prompt = self.PLANNING_RETRY_PROMPT.format(query=query)
 
-        outline_value = result.get("outline")
-        if not isinstance(outline_value, list) or len(outline_value) < 3:
-            raise ValueError("Planner 返回的 outline 必须是非空列表，且至少包含 3 个章节")
+        if validated_outline is None or len(validated_outline) < 3:
+            state.errors.append("Failed to generate research plan after retries")
+            return state
 
-        state.outline = self._validate_outline(outline_value)
+        state.outline = validated_outline
         state.hypotheses = self._validate_hypotheses(result.get("hypotheses", []))
         state.research_questions = self._validate_questions(result.get("research_questions", []))
         state.key_entities = self._validate_key_entities(result.get("key_entities", []))
@@ -167,7 +172,7 @@ class PlannerAgent(BaseAgent):
         }
         result = await self._complete_json(
             payload,
-            system_prompt=self.PLANNING_SYSTEM,
+            system_prompt=self.REVISION_SYSTEM,
             user_prompt=self.REVISION_PROMPT.format(**payload),
             temperature=0.3,
             max_tokens=16000,
