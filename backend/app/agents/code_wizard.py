@@ -439,11 +439,27 @@ print(result)"""
         if not analysis_plan:
             raise ValueError("CodeWizard 返回结果缺少 analysis_plan")
 
-        expected_outputs = value.get("expected_outputs", [])
-        if not isinstance(expected_outputs, list) or not all(
-            isinstance(item, str) and item.strip() for item in expected_outputs
-        ):
-            raise ValueError("CodeWizard expected_outputs 必须是字符串列表")
+        # The reference CodeWizard does not consume expected_outputs when it
+        # executes a plan.  Compatible models sometimes return a single
+        # string, an object, or omit this optional metadata entirely.  Keep
+        # the execution contract strict for code and analysis_plan, while
+        # normalizing this non-functional field instead of failing a run.
+        raw_expected_outputs = value.get("expected_outputs", [])
+        if isinstance(raw_expected_outputs, str):
+            expected_outputs = [raw_expected_outputs]
+        elif isinstance(raw_expected_outputs, list):
+            expected_outputs = [
+                item for item in raw_expected_outputs if isinstance(item, str)
+            ]
+        elif isinstance(raw_expected_outputs, dict):
+            expected_outputs = [
+                str(raw_expected_outputs[key]).strip()
+                for key in ("name", "description", "output")
+                if isinstance(raw_expected_outputs.get(key), str)
+                and raw_expected_outputs[key].strip()
+            ]
+        else:
+            expected_outputs = []
 
         chart_ids = value.get("chart_ids", [])
         if not isinstance(chart_ids, list):
@@ -459,7 +475,7 @@ print(result)"""
         return {
             "analysis_plan": analysis_plan,
             "code": code,
-            "expected_outputs": [item.strip() for item in expected_outputs],
+            "expected_outputs": [item.strip() for item in expected_outputs if item.strip()],
             "chart_ids": normalized_chart_ids,
         }
 

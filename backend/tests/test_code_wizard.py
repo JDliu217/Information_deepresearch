@@ -212,6 +212,28 @@ class CodeWizardAgentTests(unittest.TestCase):
         self.assertEqual(state.code_executions[0]["chart_ids"], [])
         self.assertEqual(state.code_executions[0]["status"], "succeeded")
 
+    def test_code_wizard_tolerates_non_list_expected_outputs_metadata(self):
+        class CompatibleModelClient(MockLLMClient):
+            async def complete_json(self, role, payload, **kwargs):
+                if role == "code_wizard" and payload.get("mode") != "repair":
+                    return {
+                        "analysis_plan": "统计数据点数量。",
+                        "code": "result = {'count': len(data_points)}\nprint(result)",
+                        "expected_outputs": {"description": "统计结果"},
+                    }
+                return await super().complete_json(role, payload, **kwargs)
+
+        state = ResearchState("测试问题")
+        add_three_data_points(state)
+
+        asyncio.run(CodeWizardAgent(CompatibleModelClient()).run(state))
+
+        self.assertEqual(state.code_executions[0]["status"], "succeeded")
+        self.assertEqual(
+            state.code_executions[0]["result"]["expected_outputs"],
+            ["统计结果"],
+        )
+
     def test_rejected_code_is_not_sent_back_for_repair(self):
         class UnsafeCodeClient(MockLLMClient):
             calls = 0
