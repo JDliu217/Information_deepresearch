@@ -22,6 +22,7 @@ class ResearchEventType:
     DRAFT_READY = "draft_ready"
     REVIEW_COMPLETED = "review_completed"
     RESEARCH_COMPLETED = "research_completed"
+    AGENT_PROGRESS = "agent_progress"
 
 
 EVENT_TYPES = frozenset(
@@ -34,6 +35,7 @@ EVENT_TYPES = frozenset(
         ResearchEventType.DRAFT_READY,
         ResearchEventType.REVIEW_COMPLETED,
         ResearchEventType.RESEARCH_COMPLETED,
+        ResearchEventType.AGENT_PROGRESS,
     }
 )
 
@@ -101,6 +103,9 @@ EVENT_REQUIRED_FIELDS = {
             "charts",
             "code_executions",
         }
+    ),
+    ResearchEventType.AGENT_PROGRESS: frozenset(
+        {"agent", "message_type", "timestamp", "content"}
     ),
 }
 

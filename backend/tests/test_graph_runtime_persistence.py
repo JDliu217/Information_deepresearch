@@ -38,7 +38,21 @@ class GraphRuntimePersistenceTests(unittest.TestCase):
         self.assertEqual(loaded.final_report, state.final_report)
         self.assertEqual(events[0]["type"], "research_started")
         self.assertEqual(events[-1]["type"], "research_completed")
-        self.assertEqual(len(events), 12)
+        # Agent-level progress is persisted as additional typed events. Keep
+        # the stable node milestones as the contract, without fixing the
+        # total count of progress messages.
+        event_types = [event["type"] for event in events]
+        for expected in (
+            "research_started",
+            "outline_ready",
+            "research_evidence_ready",
+            "analysis_ready",
+            "draft_ready",
+            "review_completed",
+            "research_completed",
+        ):
+            self.assertIn(expected, event_types)
+        self.assertGreaterEqual(len(events), 12)
 
 
 if __name__ == "__main__":

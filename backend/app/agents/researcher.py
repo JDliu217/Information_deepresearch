@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from datetime import datetime, timezone
+from typing import Any
+from uuid import uuid4
+
 from app.core.search_client import SearchClient
 from app.domain.state import ResearchState
 
@@ -52,6 +57,7 @@ class ResearcherAgent(BaseAgent):
         *,
         supplementary: bool | None = None,
         recursive: bool = False,
+        progress_callback: Callable[[dict[str, Any]], None] | None = None,
     ) -> ResearchState:
         """搜索章节查询，并把来源与章节关联后写入共享状态。"""
         if supplementary is None:
@@ -120,6 +126,24 @@ class ResearcherAgent(BaseAgent):
                 return state
             raise ValueError("没有可执行的研究子问题")
 
+        self._emit_progress(
+            state,
+            "research_step",
+            {
+                "step_type": "searching",
+                "title": "补充搜索" if supplementary else "信息检索",
+                "subtitle": "针对性信息补充" if supplementary else "全网深度搜索",
+                "status": "running",
+                "stats": {
+                    "sections_count": len({sid for task in tasks for sid in task["section_ids"]}),
+                    "queries_count": len(tasks),
+                    "results_count": 0,
+                },
+                "supplementary": supplementary,
+            },
+            progress_callback,
+        )
+
         collected_sources = list(state.raw_sources)
         result_limit = self.results_per_question
         if supplementary:
@@ -128,11 +152,60 @@ class ResearcherAgent(BaseAgent):
                 if recursive
                 else self.supplementary_results_per_query
             )
-        for task in tasks:
+        total_result_count = len(collected_sources)
+        for task_index, task in enumerate(tasks, start=1):
+            self._emit_progress(
+                state,
+                "action",
+                {
+                    "tool": "supplementary_search" if supplementary else "search",
+                    "query": task["query"],
+                    "section": task.get("section_title", ""),
+                    "search_type": task.get("search_type", "web"),
+                },
+                progress_callback,
+            )
             results = await self.search.search(
                 query=task["query"],
                 limit=result_limit,
             )
+            total_result_count += len(results)
+            self._emit_progress(
+                state,
+                "search_progress",
+                {
+                    "query": task["query"],
+                    "results_count": len(results),
+                    "total_so_far": total_result_count,
+                    "section": task.get("section_title", ""),
+                    "progress": f"{task_index}/{len(tasks)}",
+                    "search_type": task.get("search_type", "web"),
+                    "supplementary": supplementary,
+                },
+                progress_callback,
+            )
+            if results:
+                self._emit_progress(
+                    state,
+                    "search_results",
+                    {
+                        "results": [
+                            {
+                                "id": f"sr_{uuid4().hex[:8]}",
+                                "title": result.title[:80],
+                                "source": result.source,
+                                "url": result.url,
+                                "snippet": (result.summary or result.snippet)[:300],
+                                "date": result.date,
+                            }
+                            for result in results[:5]
+                        ],
+                        "isIncremental": True,
+                        "searchType": task.get("search_type", "web"),
+                        "section": task.get("section_title", ""),
+                    },
+                    progress_callback,
+                )
             for result in results:
                 source = result.to_dict()
                 source.setdefault("summary", source.get("snippet", ""))
@@ -172,7 +245,43 @@ class ResearcherAgent(BaseAgent):
                 if str(section.get("id", "")).strip() in researched_ids:
                     section["status"] = "researching"
         state.phase = "researching"
+        self._emit_progress(
+            state,
+            "research_step",
+            {
+                "step_type": "searching",
+                "title": "补充搜索" if supplementary else "信息检索",
+                "subtitle": "针对性信息补充" if supplementary else "全网深度搜索",
+                "status": "completed",
+                "stats": {
+                    "queries_count": len(tasks),
+                    "results_count": len(state.raw_sources),
+                    "sources_count": len(state.references),
+                },
+                "supplementary": supplementary,
+            },
+            progress_callback,
+        )
         return state
+
+    def _emit_progress(
+        self,
+        state: ResearchState,
+        event_type: str,
+        content: dict[str, Any],
+        callback: Callable[[dict[str, Any]], None] | None,
+    ) -> None:
+        """记录一条参考工程风格的增量消息，并交给 LangGraph custom stream。"""
+
+        message = {
+            "type": event_type,
+            "agent": self.name,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "content": content,
+        }
+        state.messages.append(message)
+        if callback is not None:
+            callback(message)
 
     @staticmethod
     def _build_search_tasks(

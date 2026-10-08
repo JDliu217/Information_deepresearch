@@ -55,10 +55,18 @@ class MockSearchClient(SearchClient):
             raise ValueError("limit 必须大于 0")
 
         digest = hashlib.sha1(query.encode("utf-8")).hexdigest()[:10]
+        # Give mock evidence a stable, query-specific marker near the start of
+        # the snippet. The reference Scout fingerprints facts from their first
+        # Chinese keywords and numbers; a generic shared prefix made unrelated
+        # mock queries look like duplicate evidence in workflow tests.
+        query_marker = int(hashlib.sha1(query.encode("utf-8")).hexdigest(), 16)
         result = SearchResult(
             title=f"公开资料：{query}",
             url=f"https://example.com/research/{digest}",
-            snippet=f"这是针对“{query}”的模拟公开资料摘要，用于验证研究流程。",
+            snippet=(
+                f"模拟检索记录编号 {query_marker}：针对“{query}”的公开资料摘要，"
+                "仅用于验证研究流程。"
+            ),
             query=query,
             content=f"模拟资料正文：{query}需要结合公开数据、行业实践和政策环境综合判断。",
         )

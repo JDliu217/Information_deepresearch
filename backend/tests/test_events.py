@@ -7,6 +7,7 @@ from app.domain.events import (
     ResearchEvent,
     ResearchEventType,
 )
+from app.persistence.serialization import event_to_record
 
 
 class ResearchEventTests(unittest.TestCase):
@@ -15,6 +16,7 @@ class ResearchEventTests(unittest.TestCase):
         self.assertIn(ResearchEventType.ANALYSIS_READY, EVENT_TYPES)
         self.assertIn("fact_check_results", EVENT_REQUIRED_FIELDS[ResearchEventType.REVIEW_COMPLETED])
         self.assertIn("planning", RESEARCH_PHASES)
+        self.assertIn(ResearchEventType.AGENT_PROGRESS, EVENT_TYPES)
 
     def test_event_to_dict_keeps_common_fields_and_data(self):
         event = ResearchEvent(
@@ -29,7 +31,6 @@ class ResearchEventTests(unittest.TestCase):
                 "mind_map": {},
             },
         )
-
         self.assertEqual(
             event.to_dict(),
             {
@@ -44,6 +45,26 @@ class ResearchEventTests(unittest.TestCase):
                 "mind_map": {},
             },
         )
+
+    def test_agent_progress_event_keeps_reference_message_type(self):
+        event = ResearchEvent(
+            type=ResearchEventType.AGENT_PROGRESS,
+            session_id="session-001",
+            phase="researching",
+            data={
+                "agent": "researcher",
+                "message_type": "search_progress",
+                "timestamp": "2026-10-08T00:00:00+00:00",
+                "content": {"query": "测试查询", "progress": "1/2"},
+            },
+        ).to_dict()
+
+        self.assertEqual(event["type"], "agent_progress")
+        self.assertEqual(event["message_type"], "search_progress")
+        self.assertEqual(event["content"]["progress"], "1/2")
+        record = event_to_record(event)
+        self.assertEqual(record["event_type"], "agent_progress")
+        self.assertEqual(record["data"]["message_type"], "search_progress")
 
     def test_each_event_type_declares_required_fields(self):
         self.assertEqual(set(EVENT_TYPES), set(EVENT_REQUIRED_FIELDS))

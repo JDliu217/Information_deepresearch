@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Any
@@ -61,10 +62,16 @@ class ResearchGraphRuntime:
         try:
             async for node_update in self._stream_updates(state, resume=resume):
                 latest_state = self._persist_update(node_update, latest_state)
-                if self._should_cancel(latest_state):
+                self._update_run_status(latest_state, node_update.get("events", []))
+                if node_update.get("_cancelled_boundary"):
+                    if node_update.get("_node_name") and getattr(self.graph, "checkpointer", None):
+                        await self._restore_checkpoint_after_cancel(
+                            latest_state.session_id,
+                            latest_state,
+                            node_update["_node_name"],
+                        )
                     self._mark_cancelled(latest_state)
                     return latest_state
-                self._update_run_status(latest_state, node_update.get("events", []))
             self._mark_completed(latest_state)
             return latest_state
         except Exception as exc:
@@ -103,10 +110,20 @@ class ResearchGraphRuntime:
                 if isinstance(events, list):
                     async for event in from_events(events):
                         yield event
-                if self._should_cancel(state):
-                    self._mark_cancelled(state)
-                    return
                 self._update_run_status(state, node_update.get("events", []))
+                if node_update.get("_cancelled_boundary"):
+                    if node_update.get("_node_name") and getattr(self.graph, "checkpointer", None):
+                        await self._restore_checkpoint_after_cancel(
+                            state.session_id,
+                            state,
+                            node_update["_node_name"],
+                        )
+                    self._mark_cancelled(state)
+                    # LangGraph schedules the checkpoint write immediately
+                    # before publishing an update. Give that task one event
+                    # loop turn to finish before closing ``astream``.
+                    await asyncio.sleep(0.01)
+                    return
             self._mark_completed(state)
         except Exception as exc:
             self._mark_failed(state, exc)
@@ -153,23 +170,55 @@ class ResearchGraphRuntime:
         graph_stream = self.graph.astream(
             None if resume else initial_graph_state(state),
             config=self._graph_config(state.session_id),
-            stream_mode="updates",
+            stream_mode=["updates", "custom"],
         )
+        cancellation_probe = False
+        close_stream = True
         try:
             while True:
                 if self._should_cancel(state):
-                    return
+                    cancellation_probe = True
                 try:
                     update = await graph_stream.__anext__()
                 except StopAsyncIteration:
+                    if cancellation_probe:
+                        yield {"events": [], "_cancelled_boundary": True}
                     return
-                if not isinstance(update, dict):
-                    continue
-                for node_update in update.values():
-                    if isinstance(node_update, dict):
+                if isinstance(update, tuple) and len(update) in {2, 3}:
+                    mode, payload = (
+                        update[-2],
+                        update[-1],
+                    )
+                    if mode == "custom" and isinstance(payload, dict):
+                        node_update = {"events": [payload], "_custom_stream": True}
                         yield node_update
+                    elif mode == "updates" and isinstance(payload, dict):
+                        for node_name, node_update in payload.items():
+                            if isinstance(node_update, dict):
+                                node_update = dict(node_update)
+                                node_update["_node_boundary"] = True
+                                node_update["_node_name"] = node_name
+                                if cancellation_probe:
+                                    node_update["_cancelled_boundary"] = True
+                                yield node_update
+                                if node_update.get("_cancelled_boundary"):
+                                    close_stream = False
+                                    return
+                elif isinstance(update, dict):
+                    # Compatibility with LangGraph versions/configurations
+                    # that return a plain update mapping for a single mode.
+                    for node_update in update.values():
+                        if isinstance(node_update, dict):
+                            node_update = dict(node_update)
+                            if cancellation_probe:
+                                node_update["_cancelled_boundary"] = True
+                            yield node_update
+                            if cancellation_probe:
+                                close_stream = False
+                                return
         finally:
-            await graph_stream.aclose()
+            if close_stream:
+                await graph_stream.aclose()
 
     def _persist_update(
         self,
@@ -244,6 +293,20 @@ class ResearchGraphRuntime:
                 error=str(error),
             )
 
+    async def _restore_checkpoint_after_cancel(
+        self,
+        session_id: str,
+        state: ResearchState,
+        node_name: str,
+    ) -> None:
+        """Reopen the successor edge after an interrupted async stream."""
+
+        await self.graph.aupdate_state(
+            self._graph_config(session_id),
+            {"research_state": state},
+            as_node=node_name,
+        )
+
     def _graph_config(self, session_id: str | None = None) -> dict[str, Any]:
         config: dict[str, Any] = {
             "recursion_limit": max(80, 40 + 20 * self.max_iterations),
@@ -251,6 +314,7 @@ class ResearchGraphRuntime:
         if session_id:
             config["configurable"] = {"thread_id": session_id}
         return config
+
 
 
 def from_events(events: list[Any]) -> AsyncIterator[dict[str, Any]]:

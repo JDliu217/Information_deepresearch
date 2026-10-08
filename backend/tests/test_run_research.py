@@ -1,20 +1,28 @@
 import asyncio
+import os
 import unittest
 from contextlib import redirect_stdout
 from io import StringIO
+from pathlib import Path
+from unittest.mock import patch
 
+from app.core import env as env_module
 from app.scripts.run_research import print_state, run
 
 
 class RunResearchScriptTests(unittest.TestCase):
     def test_script_run_returns_completed_state(self):
-        state = asyncio.run(run("测试行业的现状是什么？"))
+        with patch.object(env_module, "ENV_FILE", Path("missing-test.env")):
+            with patch.dict(os.environ, {}, clear=True):
+                state = asyncio.run(run("测试行业的现状是什么？"))
 
         self.assertEqual(state.phase, "completed")
         self.assertTrue(state.final_report)
 
     def test_print_state_contains_key_sections(self):
-        state = asyncio.run(run("测试行业的现状是什么？"))
+        with patch.object(env_module, "ENV_FILE", Path("missing-test.env")):
+            with patch.dict(os.environ, {}, clear=True):
+                state = asyncio.run(run("测试行业的现状是什么？"))
         output = StringIO()
 
         with redirect_stdout(output):

@@ -17,7 +17,8 @@ from app.agents.fact_extractor import FactExtractorAgent
 from app.agents.planner import PlannerAgent
 from app.agents.researcher import ResearcherAgent
 from app.agents.writer import WriterAgent
-from app.domain.events import ResearchEvent
+from app.domain.events import ResearchEvent, ResearchEventType
+from langgraph.config import get_stream_writer
 
 from .routes import prepare_review_route
 from .state import ResearchGraphState
@@ -94,10 +95,12 @@ class ResearchGraphNodes:
 
     async def research(self, graph_state: ResearchGraphState) -> dict[str, Any]:
         state = deepcopy(graph_state["research_state"])
+        progress_callback = self._progress_callback(state, phase="researching")
         await self.researcher.run(
             state,
             supplementary=bool(graph_state.get("supplementary", False)),
             recursive=int(graph_state.get("research_depth", 0)) > 0,
+            progress_callback=progress_callback,
         )
         return {"research_state": state}
 
@@ -187,10 +190,14 @@ class ResearchGraphNodes:
     async def write(self, graph_state: ResearchGraphState) -> dict[str, Any]:
         state = deepcopy(graph_state["research_state"])
         revision = bool(graph_state.get("revision", False))
+        progress_callback = self._progress_callback(
+            state,
+            phase="revising" if revision else "writing",
+        )
         if revision:
-            await self.writer.revise(state)
+            await self.writer.revise(state, progress_callback=progress_callback)
         else:
-            await self.writer.run(state)
+            await self.writer.run(state, progress_callback=progress_callback)
         return {
             "research_state": state,
             "events": [
@@ -281,3 +288,39 @@ class ResearchGraphNodes:
             iteration=state.iteration,
             data=data,
         ).to_dict()
+
+    @staticmethod
+    def _progress_callback(state: Any, *, phase: str):
+        """Return a LangGraph custom-stream callback for agent-level messages.
+
+        The callback is optional so the same Agent methods remain usable in
+        focused unit tests outside a running graph.  Custom messages are
+        intentionally kept separate from the typed node events: they mirror
+        the reference project's incremental UI messages and are yielded by
+        the runtime as soon as an agent emits them.
+        """
+
+        try:
+            writer = get_stream_writer()
+        except (LookupError, RuntimeError):
+            return None
+
+        def emit(message: dict[str, Any]) -> None:
+            if not isinstance(message, dict):
+                return
+            writer(
+                ResearchEvent(
+                    type=ResearchEventType.AGENT_PROGRESS,
+                    session_id=state.session_id,
+                    phase=phase,
+                    iteration=state.iteration,
+                    data={
+                        "agent": message.get("agent", ""),
+                        "message_type": str(message.get("type", "message")),
+                        "timestamp": message.get("timestamp", ""),
+                        "content": message.get("content", {}),
+                    },
+                ).to_dict()
+            )
+
+        return emit
