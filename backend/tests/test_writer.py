@@ -13,6 +13,39 @@ from app.domain.state import ResearchState
 
 
 class WriterAgentTests(unittest.TestCase):
+    def test_report_draft_progress_includes_synthesis_summary_and_conclusions(self):
+        class SynthesisMetadataClient(MockLLMClient):
+            async def complete_text(
+                self, role, payload, system_prompt="", user_prompt="", **kwargs
+            ):
+                if payload.get("mode") == "report":
+                    return json.dumps(
+                        {
+                            "full_report": "完整报告",
+                            "executive_summary": "报告摘要",
+                            "conclusions": ["结论一", "结论二"],
+                            "references": [],
+                        },
+                        ensure_ascii=False,
+                    )
+                return await super().complete_text(
+                    role,
+                    payload,
+                    system_prompt=system_prompt,
+                    user_prompt=user_prompt,
+                    **kwargs,
+                )
+
+        state = ResearchState("测试问题")
+        state.outline = [{"id": "sec-1", "title": "章节一"}]
+        asyncio.run(WriterAgent(SynthesisMetadataClient()).run(state))
+
+        report_event = next(
+            message for message in state.messages if message["type"] == "report_draft"
+        )
+        self.assertEqual(report_event["content"]["executive_summary"], "报告摘要")
+        self.assertEqual(report_event["content"]["conclusions"], ["结论一", "结论二"])
+
     def test_mock_writer_returns_json_for_each_writer_mode(self):
         async def run():
             client = MockLLMClient()

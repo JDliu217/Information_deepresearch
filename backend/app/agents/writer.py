@@ -370,6 +370,8 @@ class WriterAgent(BaseAgent):
         )
         report, report_result = self._parse_writing_response(report_response, "full_report")
         has_synthesis_report = bool(report)
+        executive_summary = report_result.get("executive_summary", "")
+        conclusions = report_result.get("conclusions", [])
         if not report:
             report = f"# {state.query} 研究报告\n\n" + "\n\n".join(
                 f"## {section.get('title', section['id'])}\n\n{draft_sections[section['id']]}"
@@ -393,6 +395,8 @@ class WriterAgent(BaseAgent):
             "report_draft",
             {
                 "content": state.final_report,
+                "executive_summary": executive_summary,
+                "conclusions": conclusions,
                 "word_count": len(state.final_report),
                 "references_count": len(state.references),
             },
