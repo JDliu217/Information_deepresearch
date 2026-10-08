@@ -124,6 +124,38 @@ class RealLLMClientTests(unittest.TestCase):
         self.assertIn("假设", request["messages"][0]["content"])
         self.assertIn("search_queries", request["messages"][1]["content"])
 
+    def test_complete_json_adds_provider_json_hint_when_prompt_omits_it(self):
+        fake = FakeClient(['{"data_points": [], "insights": []}'])
+        client = OpenAICompatibleLLMClient(self.settings(), client=fake)
+
+        asyncio.run(
+            client.complete_json(
+                "data_analyst",
+                {"query": "测试"},
+                system_prompt="你是数据分析 Agent。",
+                user_prompt="请提取结构化数据。",
+            )
+        )
+
+        request = fake.chat.completions.requests[0]
+        self.assertIn("JSON", request["messages"][1]["content"])
+
+    def test_complete_json_does_not_duplicate_existing_json_hint(self):
+        fake = FakeClient(['{"outline": []}'])
+        client = OpenAICompatibleLLMClient(self.settings(), client=fake)
+
+        asyncio.run(
+            client.complete_json(
+                "planner",
+                {"query": "测试"},
+                system_prompt="请返回 JSON。",
+                user_prompt="输出 JSON 对象。",
+            )
+        )
+
+        request = fake.chat.completions.requests[0]
+        self.assertEqual(request["messages"][1]["content"], "输出 JSON 对象。")
+
     def test_deepseek_thinking_disabled_does_not_send_reasoning_effort(self):
         fake = FakeClient(['{"outline": []}'])
         settings = self.settings(

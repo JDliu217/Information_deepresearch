@@ -95,6 +95,11 @@ class OpenAICompatibleLLMClient(LLMClient):
         # for low-level compatibility; production Agent calls always provide both.
         if not user_prompt.strip():
             user_prompt = json.dumps(payload, ensure_ascii=False, default=str)
+        if json_mode and not re.search(r"\bjson\b", f"{system_prompt}\n{user_prompt}", re.I):
+            # DeepSeek requires the word JSON somewhere in the prompt when
+            # response_format=json_object is used. This is a transport hint;
+            # the Agent still owns the actual output schema and instructions.
+            user_prompt = f"{user_prompt.rstrip()}\n\n请仅返回有效的 JSON 对象。"
         request: dict[str, Any] = {
             "model": model_settings.model,
             "messages": [
