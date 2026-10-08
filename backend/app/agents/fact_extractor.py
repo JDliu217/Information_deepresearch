@@ -20,15 +20,25 @@ class FactExtractorAgent(BaseAgent):
 直接支持，不能编造来源、数字或未提供的事实。区分事实、假设证据、洞察和信息缺口。"""
     SEARCH_ANALYSIS_PROMPT = """请从当前章节的搜索结果中提取结构化证据。
 
-返回 JSON：
+只返回 JSON 对象：
 {
   "extracted_facts": [], "hypothesis_evidence": [], "entities_discovered": [],
   "key_insights": [], "follow_up_queries": [], "source_tracing_queries": [],
   "missing_info": [], "source_quality_assessment": ""
 }
 
-每条事实必须标明可追溯的 source_url；数据点必须有指标、数值、单位和年份（来源没有则为 null）。
-没有明确证据就省略，不要为了填数组而编造内容；来源冲突时分别保留并说明冲突。"""
+extracted_facts 的每个元素必须是对象，并包含：
+- content：非空、具体且可由对应来源摘要直接支持的事实陈述；
+- source_url：从本次 sources 中某条 url 原样复制，不得省略、改写或编造；
+- source_name：对应来源名称；
+- credibility_score：0 到 1 的数字；
+- data_points：数据点数组，没有则为 []。数据点须有 name、value、unit、year（年份未知用 null）。
+可选 related_hypothesis 和 hypothesis_support 必须对应输入中的假设和证据方向。
+不要另外输出 facts 字段。没有明确证据时 extracted_facts 返回 []；不要为了填数组而编造内容。
+来源冲突时分别保留并说明冲突。"""
+    SCHEMA_REPAIR_PROMPT = """上次事实提取结果未通过结构校验。请针对下面的校验错误重新分析同一批来源，
+重新输出完整 JSON 对象。每条 extracted_facts 必须同时包含非空 content 和本次 sources 中原样存在的
+source_url。无法确认来源的事实应从结果中删除，不得猜测或补造 URL。"""
     DEEP_READ_PROMPT = """请对指定来源进行深度阅读，只抽取与当前章节直接相关的原文证据、数据点、
 假设支持方向和仍需核验的内容。保持 source_url 不变，不把宣传语或推测写成事实。"""
     SUPPLEMENTARY_SEARCH_PROMPT = """请根据当前缺口生成少量可执行的补充搜索查询和来源追溯查询。查询应
@@ -96,17 +106,28 @@ class FactExtractorAgent(BaseAgent):
                 "hypotheses": state.hypotheses,
                 "instruction": "只提取来源摘要中明确表达、且可以由同一 URL 支撑的事实；如果事实与研究假设相关，请标记关联假设和支持方向。",
             }
-            result = await self._complete_json(
-                payload,
-                system_prompt=self.SEARCH_ANALYSIS_SYSTEM,
-                user_prompt=self._render_prompt(self.SEARCH_ANALYSIS_PROMPT, payload),
-            )
-            raw_facts = self._normalize_extracted_facts(result)
-            facts = self._validate_facts(
-                raw_facts,
-                section_sources[: self.max_sources_per_section],
-                state.hypotheses,
-            )
+            prompt = self.SEARCH_ANALYSIS_PROMPT
+            for attempt in range(2):
+                result = await self._complete_json(
+                    payload,
+                    system_prompt=self.SEARCH_ANALYSIS_SYSTEM,
+                    user_prompt=self._render_prompt(prompt, payload),
+                )
+                try:
+                    raw_facts = self._normalize_extracted_facts(result)
+                    facts = self._validate_facts(
+                        raw_facts,
+                        section_sources[: self.max_sources_per_section],
+                        state.hypotheses,
+                    )
+                    break
+                except ValueError as exc:
+                    if attempt:
+                        raise ValueError(
+                            f"FactExtractor 章节 {section_id or '未分配'} 的事实格式修复失败：{exc}"
+                        ) from exc
+                    payload = {**payload, "validation_error": str(exc)}
+                    prompt = f"{self.SEARCH_ANALYSIS_PROMPT}\n\n{self.SCHEMA_REPAIR_PROMPT}"
             if section_id:
                 for fact in facts:
                     fact["section_id"] = section_id
@@ -431,10 +452,15 @@ class FactExtractorAgent(BaseAgent):
             if not isinstance(item, dict):
                 raise ValueError(f"FactExtractor 的第 {index} 个事实不是对象")
 
-            content = str(item.get("content", "")).strip()
-            source_url = str(item.get("source_url", "")).strip()
+            content = str(item.get("content") or "").strip()
+            source_url = str(item.get("source_url") or "").strip()
             if not content or not source_url:
-                raise ValueError(f"FactExtractor 的第 {index} 个事实缺少 content 或 source_url")
+                fields = sorted(str(key)[:40] for key in item)[:20]
+                raise ValueError(
+                    f"FactExtractor 的第 {index} 个事实缺少 content 或 source_url; "
+                    f"content_present={bool(content)}, source_url_present={bool(source_url)}, "
+                    f"fields={fields}"
+                )
             if source_url not in allowed_urls:
                 raise ValueError(f"FactExtractor 的第 {index} 个事实引用了未知来源")
 

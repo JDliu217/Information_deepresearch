@@ -148,6 +148,30 @@ class MixedFactClient(LLMClient):
         return ""
 
 
+class RepairingFactClient(LLMClient):
+    def __init__(self):
+        self.calls = []
+
+    async def complete_json(self, role, payload, system_prompt="", user_prompt=""):
+        self.calls.append((payload, system_prompt, user_prompt))
+        if len(self.calls) == 1:
+            return {"extracted_facts": [{"content": "首轮缺少来源 URL"}]}
+        source = payload["sources"][0]
+        return {
+            "extracted_facts": [
+                {
+                    "content": "修复后保留有来源的事实。",
+                    "source_name": source["source"],
+                    "source_url": source["url"],
+                    "credibility_score": 0.8,
+                }
+            ]
+        }
+
+    async def complete_text(self, role, payload, system_prompt="", user_prompt=""):
+        return ""
+
+
 class FactExtractorAgentTests(unittest.TestCase):
     def test_fact_extractor_calls_once_per_section_with_reference_limits(self):
         class CapturingClient(LLMClient):
@@ -255,6 +279,58 @@ class FactExtractorAgentTests(unittest.TestCase):
         asyncio.run(FactExtractorAgent(MixedFactClient()).run(state))
 
         self.assertEqual([fact["content"] for fact in state.facts], ["参考字段中的有效事实。"])
+
+    def test_fact_extractor_repairs_missing_source_url_once(self):
+        client = RepairingFactClient()
+        state = ResearchState("测试问题")
+        state.raw_sources = [
+            {
+                "title": "来源",
+                "url": "https://example.com/source",
+                "source": "测试站点",
+                "summary": "摘要",
+            }
+        ]
+
+        asyncio.run(FactExtractorAgent(client).run(state))
+
+        self.assertEqual(len(client.calls), 2)
+        self.assertIn("source_url", client.calls[0][2])
+        self.assertIn("缺少 content 或 source_url", client.calls[1][0]["validation_error"])
+        self.assertIn("重新输出完整 JSON", client.calls[1][2])
+        self.assertEqual(len(state.facts), 1)
+        self.assertEqual(state.facts[0]["source_url"], "https://example.com/source")
+
+    def test_fact_extractor_still_rejects_unrepairable_unknown_source(self):
+        class CountingBrokenFactClient(BrokenFactClient):
+            def __init__(self):
+                self.calls = 0
+
+            async def complete_json(self, role, payload):
+                self.calls += 1
+                return await super().complete_json(role, payload)
+
+        client = CountingBrokenFactClient()
+        state = ResearchState("测试问题")
+        state.raw_sources = [
+            {"title": "来源", "url": "https://example.com/source", "summary": "摘要"}
+        ]
+
+        with self.assertRaisesRegex(ValueError, "事实格式修复失败.*未知来源"):
+            asyncio.run(FactExtractorAgent(client).run(state))
+
+        self.assertEqual(client.calls, 2)
+        self.assertEqual(state.facts, [])
+
+    def test_fact_extractor_rejects_null_content_without_logging_values(self):
+        with self.assertRaisesRegex(ValueError, "content_present=False") as error:
+            FactExtractorAgent._validate_facts(
+                [{"content": None, "source_url": "https://example.com/source"}],
+                [{"url": "https://example.com/source"}],
+                [],
+            )
+
+        self.assertIn("fields=['content', 'source_url']", str(error.exception))
 
     def test_fact_extractor_turns_raw_sources_into_facts(self):
         async def run_chain():
