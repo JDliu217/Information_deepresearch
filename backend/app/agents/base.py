@@ -25,6 +25,8 @@ class BaseAgent(ABC):
         *,
         system_prompt: str,
         user_prompt: str,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
     ) -> dict[str, Any]:
         """Call an LLM with Agent-owned prompts.
 
@@ -34,14 +36,16 @@ class BaseAgent(ABC):
         """
 
         method = self.llm.complete_json  # type: ignore[attr-defined]
-        if self._supports_prompts(method):
-            return await method(
-                role=self.name,
-                payload=payload,
-                system_prompt=system_prompt,
-                user_prompt=user_prompt,
-            )
-        return await method(role=self.name, payload=payload)
+        kwargs: dict[str, Any] = {"role": self.name, "payload": payload}
+        if self._supports_parameter(method, "system_prompt"):
+            kwargs["system_prompt"] = system_prompt
+        if self._supports_parameter(method, "user_prompt"):
+            kwargs["user_prompt"] = user_prompt
+        if temperature is not None and self._supports_parameter(method, "temperature"):
+            kwargs["temperature"] = temperature
+        if max_tokens is not None and self._supports_parameter(method, "max_tokens"):
+            kwargs["max_tokens"] = max_tokens
+        return await method(**kwargs)
 
     async def _complete_text(
         self,
@@ -49,24 +53,40 @@ class BaseAgent(ABC):
         *,
         system_prompt: str,
         user_prompt: str,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+        json_mode: bool = False,
     ) -> str:
         """Text equivalent of ``_complete_json`` with fake-client compatibility."""
 
         method = self.llm.complete_text  # type: ignore[attr-defined]
-        if self._supports_prompts(method):
-            return await method(
-                role=self.name,
-                payload=payload,
-                system_prompt=system_prompt,
-                user_prompt=user_prompt,
-            )
-        return await method(role=self.name, payload=payload)
+        kwargs: dict[str, Any] = {"role": self.name, "payload": payload}
+        if self._supports_parameter(method, "system_prompt"):
+            kwargs["system_prompt"] = system_prompt
+        if self._supports_parameter(method, "user_prompt"):
+            kwargs["user_prompt"] = user_prompt
+        if temperature is not None and self._supports_parameter(method, "temperature"):
+            kwargs["temperature"] = temperature
+        if max_tokens is not None and self._supports_parameter(method, "max_tokens"):
+            kwargs["max_tokens"] = max_tokens
+        if json_mode and self._supports_parameter(method, "json_mode"):
+            kwargs["json_mode"] = True
+        return await method(**kwargs)
 
     @staticmethod
     def _supports_prompts(method: Any) -> bool:
-        parameters = inspect.signature(method).parameters.values()
+        return BaseAgent._supports_parameter(method, "system_prompt")
+
+    @staticmethod
+    def _supports_parameter(method: Any, name: str) -> bool:
+        """Return whether a legacy or current client accepts a keyword."""
+
+        try:
+            parameters = inspect.signature(method).parameters.values()
+        except (TypeError, ValueError):
+            return False
         return any(
-            parameter.name in {"system_prompt", "user_prompt"}
+            parameter.name == name
             or parameter.kind is inspect.Parameter.VAR_KEYWORD
             for parameter in parameters
         )

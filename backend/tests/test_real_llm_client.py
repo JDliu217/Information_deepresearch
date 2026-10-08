@@ -124,6 +124,23 @@ class RealLLMClientTests(unittest.TestCase):
         self.assertIn("假设", request["messages"][0]["content"])
         self.assertIn("search_queries", request["messages"][1]["content"])
 
+    def test_complete_json_accepts_per_call_generation_settings(self):
+        fake = FakeClient(['{"outline": []}'])
+        client = OpenAICompatibleLLMClient(self.settings(), client=fake)
+
+        asyncio.run(
+            client.complete_json(
+                "planner",
+                {"query": "测试"},
+                temperature=0.3,
+                max_tokens=1234,
+            )
+        )
+
+        request = fake.chat.completions.requests[0]
+        self.assertEqual(request["temperature"], 0.3)
+        self.assertEqual(request["max_tokens"], 1234)
+
     def test_complete_json_adds_provider_json_hint_when_prompt_omits_it(self):
         fake = FakeClient(['{"data_points": [], "insights": []}'])
         client = OpenAICompatibleLLMClient(self.settings(), client=fake)
@@ -226,6 +243,25 @@ class RealLLMClientTests(unittest.TestCase):
 
         self.assertEqual(result, '{"full_report": "## 执行摘要\\n内容", "references": []}')
         self.assertNotIn("response_format", fake.chat.completions.requests[0])
+
+    def test_complete_text_can_request_json_mode(self):
+        fake = FakeClient(['{"full_report": "内容"}'])
+        client = OpenAICompatibleLLMClient(self.settings(), client=fake)
+
+        asyncio.run(
+            client.complete_text(
+                "writer",
+                {"mode": "report", "query": "测试"},
+                temperature=0.3,
+                max_tokens=16000,
+                json_mode=True,
+            )
+        )
+
+        request = fake.chat.completions.requests[0]
+        self.assertEqual(request["temperature"], 0.3)
+        self.assertEqual(request["max_tokens"], 16000)
+        self.assertEqual(request["response_format"], {"type": "json_object"})
 
     def test_invalid_json_is_retried_and_then_reported(self):
         fake = FakeClient(["不是 JSON", "仍然不是 JSON"])

@@ -20,6 +20,8 @@ class LLMClient(ABC):
         payload: dict[str, Any],
         system_prompt: str = "",
         user_prompt: str = "",
+        temperature: float | None = None,
+        max_tokens: int | None = None,
     ) -> dict[str, Any]:
         """让模型返回结构化 JSON 数据。"""
         raise NotImplementedError
@@ -31,6 +33,9 @@ class LLMClient(ABC):
         payload: dict[str, Any],
         system_prompt: str = "",
         user_prompt: str = "",
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+        json_mode: bool = False,
     ) -> str:
         """让模型返回普通文本。"""
         raise NotImplementedError
@@ -49,6 +54,8 @@ class MockLLMClient(LLMClient):
         payload: dict[str, Any],
         system_prompt: str = "",
         user_prompt: str = "",
+        temperature: float | None = None,
+        max_tokens: int | None = None,
     ) -> dict[str, Any]:
         if role == "planner":
             query = str(payload.get("query", "")).strip()
@@ -146,65 +153,73 @@ class MockLLMClient(LLMClient):
             }
 
         if role == "data_analyst":
-            data_points = payload.get("data_points", [])
-            if not data_points and isinstance(payload.get("data"), dict):
-                data_points = payload["data"].get("existing_data_points", [])
-            if not data_points:
-                return {"insights": [], "charts": []}
-
-            first_name = str(data_points[0].get("name", "指标")).strip() or "指标"
-            categories = [
-                str(point.get("year") or index)
-                for index, point in enumerate(data_points, start=1)
-            ]
-            values = [point.get("value") for point in data_points]
-            point_ids = [
-                str(point.get("id", "")).strip()
-                for point in data_points
-                if point.get("id")
-            ]
-            return {
-                "insights": [
-                    f"已整理 {len(data_points)} 个结构化数据点，主要指标为“{first_name}”。"
-                ],
-                "charts": [
-                    {
-                        "id": "chart_data_points",
-                        "title": f"{payload.get('query', '研究对象')}数据点概览",
+            mode = payload.get("mode")
+            if mode == "data_extraction":
+                # These explicitly synthetic values exercise the three-stage
+                # contract without pretending the mock has inferred real facts.
+                results = str(payload.get("search_results", ""))
+                fact_count = sum(1 for line in results.splitlines() if line.strip().startswith("- "))
+                if not fact_count:
+                    return {"data_points": [], "time_series": [], "distributions": [], "insights": []}
+                return {
+                    "data_points": [{
+                        "id": "dp_mock_fact_count",
+                        "name": "Mock 流程事实条数",
+                        "value": fact_count,
+                        "unit": "条",
+                        "year": 2024,
+                        "source": "Mock 测试数据",
+                        "category": "pipeline_check",
+                        "confidence": 0.5,
+                    }],
+                    "time_series": [],
+                    "distributions": [],
+                    "insights": [f"Mock 数据流已收到 {fact_count} 条事实材料。"],
+                }
+            if mode == "knowledge_graph":
+                return {"nodes": [], "edges": []}
+            if mode == "chart_generation":
+                chart_data = payload.get("data", {})
+                if not isinstance(chart_data, dict):
+                    return {"charts": []}
+                data_points = chart_data.get("data_points", [])
+                if not data_points:
+                    return {"charts": []}
+                categories = [str(point.get("name", "指标")) for point in data_points]
+                values = [point.get("value") for point in data_points]
+                return {
+                    "charts": [{
+                        "id": "chart_mock_data_points",
+                        "title": f"{payload.get('query', '研究对象')} Mock 数据示例",
                         "type": "bar",
-                        "data": {"data_point_ids": point_ids},
                         "echarts_option": {
                             "tooltip": {"trigger": "axis"},
                             "xAxis": {"type": "category", "data": categories},
                             "yAxis": {"type": "value"},
-                            "series": [
-                                {
-                                    "name": first_name,
-                                    "type": "bar",
-                                    "data": values,
-                                }
-                            ],
+                            "series": [{"name": "Mock 示例数据", "type": "bar", "data": values}],
                         },
-                    }
-                ],
-            }
+                    }]
+                }
+            raise ValueError(f"Mock DataAnalyst 不支持模式: {mode}")
 
         if role == "code_wizard":
             if payload.get("mode") == "repair":
                 return {
-                    "purpose": "修复统计分析代码。",
-                    "code": "result = {'data_point_count': len(data_points)}\nprint(result)",
-                    "expected_outputs": ["analysis_summary"],
-                    "chart_ids": [],
+                    "fixed_code": "result = {'data_point_count': len(data_points)}\nprint(result)",
+                    "error_analysis": "修复执行错误。",
+                    "fix_description": "改为统计可用数据点数量。",
                 }
-            data_points = payload.get("data_points", [])
-            chart_ids = [
-                str(chart.get("id", "")).strip()
-                for chart in payload.get("charts", [])
-                if isinstance(chart, dict) and str(chart.get("id", "")).strip()
-            ]
+            if payload.get("mode") == "chart_generation":
+                return {
+                    "code": (
+                        "plt.plot([2022, 2023, 2024], [10, 20, 30], marker='o')\n"
+                        "plt.title('Mock 章节趋势')\n"
+                        "plt.savefig('chart.png')"
+                    ),
+                    "chart_description": "Mock 章节趋势图；执行器当前不渲染图片。",
+                }
             return {
-                "purpose": "根据已验证的数据点生成分析结果和图表产物。",
+                "analysis_plan": "统计已验证数据点的数量。",
                 "code": (
                     "# CodeWizard 生成的待执行分析代码\n"
                     "data_point_count = len(data_points)\n"
@@ -212,7 +227,6 @@ class MockLLMClient(LLMClient):
                     "print(result)"
                 ),
                 "expected_outputs": ["analysis_summary"],
-                "chart_ids": chart_ids,
             }
 
         if role == "critic":
@@ -266,6 +280,9 @@ class MockLLMClient(LLMClient):
         payload: dict[str, Any],
         system_prompt: str = "",
         user_prompt: str = "",
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+        json_mode: bool = False,
     ) -> str:
         if role != "writer":
             raise ValueError(f"MockLLMClient 暂时不支持文本角色: {role}")

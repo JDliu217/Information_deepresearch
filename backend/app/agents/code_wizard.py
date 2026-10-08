@@ -1,7 +1,8 @@
-"""CodeWizard 的代码生成阶段。"""
+"""CodeWizard 的代码分析阶段。"""
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from app.core.llm_client import LLMClient
@@ -12,19 +13,208 @@ from .base import BaseAgent
 
 
 class CodeWizardAgent(BaseAgent):
-    """为数据分析生成待执行代码，并记录执行前的计划。"""
+    """分析已有数据点，并把代码执行记录保存在研究状态中。
+
+    当前的受限解释器有意不提供 pandas、matplotlib 或文件输出能力。图表
+    仍由 DataAnalyst 生成 ECharts 配置；CodeWizard 的图片绘制工作会被
+    记录为跳过，直到后续沙箱支持绘图库和图片产物。
+    """
 
     name = "code_wizard"
-    ANALYSIS_SYSTEM = """你是 DeepResearch 的 CodeWizard。代码会在严格受限执行器中运行，不能 import、
-访问网络、文件、进程、属性链或动态执行，只能使用输入中的 data_points、facts、insights 和 charts。
-不要编造数据或图表 ID。"""
-    ANALYSIS_PROMPT = """请根据已有数据点生成短小的受控统计分析代码。返回 purpose、code、expected_outputs
-和 chart_ids。代码只做必要的计数、均值、最小值、最大值或趋势摘要。"""
-    CODE_FIX_PROMPT = """请根据受控执行器返回的错误修复代码。保持原分析目的和已有图表 ID，不增加
-import、文件、网络、进程或动态执行。"""
-    CHART_CODE_PROMPT = """请为已有图表生成与数据点一致的受控代码，不能引用不存在的图表 ID。"""
+
+    ANALYSIS_SYSTEM = """你是研究数据分析助手。只分析输入中已有的数据，不得补造或外推数据。
+代码交给受限统计解释器执行：只能对给定的 data_points、facts、insights、charts 做简单统计，
+不可 import、访问网络或文件、调用进程、属性链或动态执行。返回严格 JSON。"""
+
+    ANALYSIS_PROMPT = r"""你是一位资深的数据分析师，擅长用Python进行数据处理和可视化。
+
+## 研究问题
+{query}
+
+## 可用数据
+{data_points}
+
+## 任务
+根据上述数据，生成Python代码完成以下任务：
+1. 数据清洗和标准化
+2. 计算关键统计指标
+3. 生成专业的可视化图表
+
+## 代码要求（必须严格遵守）
+
+### 0. 禁止使用反斜杠续行（最重要！）
+**严禁使用反斜杠 `\` 进行代码续行**。Python 的字典、列表、函数参数天然支持跨行书写，不需要反斜杠。
+
+✅ 正确示例：
+```python
+data = {{
+    "Year": [2020, 2021, 2022],
+    "Value": [100, 200, 300]
+}}
+df = pd.DataFrame(data)
+```
+
+❌ 错误示例（绝对禁止）：
+```python
+data = {{ \
+    "Year": ...
+}}
+```
+
+### 1. 数据精简
+- **只选取最关键的5-10个数据点**，不要把所有数据都写入代码
+- **相同指标去重**：如果有多个年份的同一指标，只保留有代表性的几个
+- **代码总长度不超过40行**
+- **禁止生成重复数据**：如 [2020, 2020, 2020...] 这种重复是错误的
+
+### 2. 数据定义方式
+必须使用"列字典"格式定义数据：
+```python
+data = {{
+    "Year": [2018, 2020, 2022, 2024],
+    "Market_Size": [604.2, 1500, 2300, 3000]
+}}
+df = pd.DataFrame(data)
+```
+
+**禁止**使用复杂的嵌套列表 `[[...], [...]]`。
+
+### 3. 数据清洗
+创建 DataFrame 后，**必须**执行类型转换：
+```python
+for col in df.columns:
+    if col != 'Year':
+        df[col] = pd.to_numeric(df[col], errors='coerce')
+df = df.dropna()
+```
+
+### 4. 环境限制
+- **禁止import语句**，已预定义: pd, np, plt, sns
+- **禁止plt.rcParams**，中文字体已预设
+
+### 5. 高级图表样式（必须遵守）
+生成专业、高端的商业图表，要求：
+- **图表尺寸**: `plt.figure(figsize=(12, 7), dpi=200)`
+- **seaborn主题**: `sns.set_theme(style='whitegrid', palette='husl')`
+- **标题**: `plt.title('标题', fontsize=18, fontweight='bold', pad=20)`
+- **轴标签**: `fontsize=14`
+- **刻度**: `fontsize=12`
+- **配色**: 使用专业配色如 `#6366f1`（靛蓝）、`#06b6d4`（青色）、`#10b981`（翡翠绿）
+- **网格线**: `plt.grid(True, linestyle='--', alpha=0.3)`
+- **去除边框**: `sns.despine()`
+- **折线图**: `linewidth=2.5, marker='o', markersize=8`，可加面积填充 `plt.fill_between()`
+- **柱状图**: 添加数值标签
+- **保存**: `plt.savefig('chart.png', dpi=200, bbox_inches='tight', facecolor='white')`
+
+## 输出格式（严格JSON，code字段用\n表示换行）
+```json
+{{
+    "analysis_plan": "简要分析计划",
+    "code": "sns.set_theme(style='whitegrid')\ndata = {{'Year': [2020, 2022, 2024], 'Value': [100, 150, 200]}}\ndf = pd.DataFrame(data)\ndf['Value'] = pd.to_numeric(df['Value'], errors='coerce')\nplt.figure(figsize=(12, 7), dpi=200)\nplt.plot(df['Year'], df['Value'], linewidth=2.5, marker='o', markersize=8, color='#6366f1')\nplt.fill_between(df['Year'], df['Value'], alpha=0.15, color='#6366f1')\nplt.title('市场规模趋势', fontsize=18, fontweight='bold')\nplt.xlabel('年份', fontsize=14)\nplt.ylabel('规模（亿元）', fontsize=14)\nplt.xticks(fontsize=12)\nplt.yticks(fontsize=12)\nsns.despine()\nplt.savefig('chart.png', dpi=200, bbox_inches='tight', facecolor='white')",
+    "expected_outputs": ["图表描述"]
+}}
+```
+
+注意：code 字段中的换行请使用 `\n` 字符表示，不要使用物理换行符，也**绝对不要使用续行符 `\`**。"""
+
+    CODE_FIX_PROMPT = r"""你是一位Python专家，需要修复执行失败的代码。
+
+## 错误类型诊断
+
+请根据错误信息判断错误类型并采取对应修复方法：
+
+1. **如果错误是 `could not convert string to float`**：
+   说明你试图将包含中文或特殊字符的列作为数值列处理。
+   **修复方法**：在绘图或计算前，使用 `pd.to_numeric(df['col'], errors='coerce')` 清洗该列，并删除 NaN 值。
+   不要试图直接画包含中文内容的列（除非是作为标签）。
+
+2. **如果错误是 `SyntaxError`**：
+   检查是否有多余的反斜杠或未闭合的括号。
+
+3. **如果错误是 `KeyError`**：
+   检查 DataFrame 列名是否正确，确保使用的列名与数据定义一致。
+
+4. **如果错误是类型相关 (`TypeError`)**：
+   检查数据类型是否匹配，必要时使用 `.astype()` 或 `pd.to_numeric()` 转换。
+
+## 原始代码
+{code}
+
+## 错误信息
+{error}
+
+## 输出
+{stdout}
+
+## 要求
+1. **不要写import语句**，已预导入: pd, np, plt, sns
+2. 中文字体已预设
+3. 使用"列字典"格式定义数据: `data = {{"col1": [...], "col2": [...]}}`
+4. 创建 DataFrame 后立即转换数值列
+
+## 输出格式
+```json
+{{
+    "error_analysis": "错误原因分析",
+    "fix_description": "具体修复说明",
+    "fixed_code": "data = {{'Year': [2020, 2021], 'Value': [100, 200]}}\ndf = pd.DataFrame(data)\ndf['Value'] = pd.to_numeric(df['Value'], errors='coerce')\nprint('done')"
+}}
+```"""
+
+    CHART_SYSTEM = """你是研究数据可视化助手，只能使用输入中提供的数据。
+当前运行环境不会执行或渲染 matplotlib 等绘图代码。请按要求生成图表代码并返回 JSON，
+代码只会保存供后续受限沙箱评估，不要在输出中声称图表已经生成。"""
+
+    CHART_PROMPT = r"""你是专业的数据可视化专家，擅长制作高端商业图表。
+
+## 主题: {topic}
+## 图表类型: {chart_type}
+## 标题: {title}
+
+## 数据
+{data}
+
+## 代码要求（重要）
+
+### 基础要求
+1. **严禁使用反斜杠 `\` 进行代码续行**
+2. **不要写import语句**，已预导入: pd, np, plt, sns
+3. 数据定义使用标准字典格式: `data = {{"col1": [...], "col2": [...]}}`
+
+### 高级样式要求（必须遵守）
+1. **图表尺寸**: `plt.figure(figsize=(12, 7), dpi=200)`
+2. **使用 seaborn 主题**: `sns.set_theme(style='whitegrid', palette='husl')`
+3. **标题字体**: `plt.title('标题', fontsize=18, fontweight='bold', pad=20)`
+4. **坐标轴标签**: `plt.xlabel('X轴', fontsize=14)` 和 `plt.ylabel('Y轴', fontsize=14)`
+5. **刻度字体**: `plt.xticks(fontsize=12)` 和 `plt.yticks(fontsize=12)`
+6. **添加数据标签**: 在柱状图或折线图的数据点上显示数值
+7. **配色方案**: 使用渐变色或专业配色，如 `color='#6366f1'` 或 `palette='Blues_d'`
+8. **网格线**: 使用浅色虚线网格 `plt.grid(True, linestyle='--', alpha=0.3)`
+9. **边框优化**: `sns.despine()` 去除上右边框
+10. **保存**: `plt.savefig('chart.png', dpi=200, bbox_inches='tight', facecolor='white', edgecolor='none')`
+
+### 折线图额外要求
+- 线宽 2.5: `linewidth=2.5`
+- 添加数据点标记: `marker='o', markersize=8`
+- 添加面积填充: `plt.fill_between(x, y, alpha=0.15)`
+
+### 柱状图额外要求
+- 圆角效果（如支持）
+- 添加数值标签: `for i, v in enumerate(values): plt.text(i, v + offset, str(v), ha='center', fontsize=11)`
+
+## 输出格式（严格JSON）
+```json
+{{
+    "code": "sns.set_theme(style='whitegrid')\ndata = {{'Year': [2020, 2022], 'Value': [100, 200]}}\ndf = pd.DataFrame(data)\nplt.figure(figsize=(12,7), dpi=200)\nplt.bar(df['Year'], df['Value'], color='#6366f1')\nplt.title('标题', fontsize=18, fontweight='bold')\nplt.xlabel('年份', fontsize=14)\nplt.ylabel('数值', fontsize=14)\nplt.xticks(fontsize=12)\nplt.yticks(fontsize=12)\nsns.despine()\nplt.savefig('chart.png', dpi=200, bbox_inches='tight', facecolor='white')",
+    "chart_description": "图表说明"
+}}
+```
+
+注意：code字段用 `\n` 表示换行，**绝对不要使用续行符 `\`**。"""
+
     max_repair_attempts = 3
     max_chart_sections = 2
+    max_repair_stdout_chars = 1000
 
     def __init__(
         self,
@@ -35,129 +225,157 @@ import、文件、网络、进程或动态执行。"""
         self.executor = executor or RestrictedCodeExecutor()
 
     async def run(self, state: ResearchState) -> ResearchState:
-        if not state.facts:
-            raise ValueError("没有可供 CodeWizard 分析的事实")
-        if not state.data_points:
+        # Match the reference CodeWizard gate. Checking it unconditionally is
+        # important here because the preceding LangGraph node may already have
+        # set phase="analyzing" before CodeWizard runs.
+        if len(state.data_points) < 3:
             return state
 
+        data_summary = self._format_data_points(state.data_points)
         payload = {
             "query": state.query,
-            "facts": self._fact_summaries(state.facts[:20]),
-            "data_points": self._data_point_summaries(state.data_points),
-            "insights": state.insights[:10],
-            "charts": self._charts_for_analysis(state.charts),
+            "data_summary": data_summary,
             "instruction": (
-                "只根据已有事实和数据点生成分析代码。代码将在受控执行器中运行，"
-                "不要访问网络、文件系统或进程；返回代码用途、预期输出和关联图表 ID。"
+                "数据点按名称、数值、单位和年份整理；只能使用这些数据进行简单统计分析。"
             ),
         }
-        result = await self._complete_json(
+        response = await self._complete_json(
             payload,
             system_prompt=self.ANALYSIS_SYSTEM,
-            user_prompt=self._render_prompt(self.ANALYSIS_PROMPT, payload),
+            user_prompt=self.ANALYSIS_PROMPT.format(
+                query=state.query,
+                data_points=data_summary,
+            ),
+            temperature=0.2,
         )
-        plan = self._validate_plan(result)
-        known_chart_ids = {str(chart.get("id", "")).strip() for chart in state.charts}
-        unknown_chart_ids = set(plan["chart_ids"]) - known_chart_ids
-        if unknown_chart_ids:
-            raise ValueError("CodeWizard 引用了不存在的图表 ID")
+        plan = self._validate_plan(response)
+
+        # chart_ids is accepted only as a compatibility field for older
+        # clients. The reference analysis contract does not ask the model for
+        # chart IDs, and repeated IDs should not fail an entire research run.
+        known_chart_ids = {
+            str(chart.get("id", "")).strip()
+            for chart in state.charts
+            if isinstance(chart, dict) and str(chart.get("id", "")).strip()
+        }
+        plan["chart_ids"] = [
+            chart_id for chart_id in plan["chart_ids"] if chart_id in known_chart_ids
+        ]
+
         for attempt in range(self.max_repair_attempts + 1):
             execution = self.executor.execute(
                 plan["code"],
                 {
                     "data_points": state.data_points,
-                    "facts": state.facts[:20],
-                    "insights": state.insights[:10],
-                    "charts": self._charts_for_analysis(state.charts),
+                    "facts": state.facts,
+                    "insights": state.insights,
+                    "charts": state.charts,
                 },
                 execution_id=f"exec_{len(state.code_executions) + 1}",
             )
             execution.result = {
-                "purpose": plan["purpose"],
+                "analysis_plan": plan["analysis_plan"],
                 "expected_outputs": plan["expected_outputs"],
                 "output": execution.result,
             }
             execution.chart_ids = plan["chart_ids"]
             state.code_executions.append(execution.to_dict())
+
             if execution.status == "succeeded":
                 for chart in state.charts:
-                    if str(chart.get("id", "")).strip() in execution.chart_ids:
+                    if (
+                        isinstance(chart, dict)
+                        and str(chart.get("id", "")).strip() in execution.chart_ids
+                    ):
                         chart["code"] = execution.code
                         chart["execution_id"] = execution.id
+
+            # A safety rejection is terminal: never ask a model to rewrite
+            # code that attempted to leave the restricted execution surface.
             if execution.status != "failed" or attempt >= self.max_repair_attempts:
                 break
+
             repair_payload = {
                 "mode": "repair",
                 "query": state.query,
-                "data_points": self._data_point_summaries(state.data_points),
+                "data_summary": data_summary,
+                "analysis_plan": plan["analysis_plan"],
                 "code": plan["code"],
                 "error": str(execution.error).strip()[:2000],
-                "stdout": str(execution.stdout).strip()[:2000],
-                "instruction": "修复运行错误，保持相同的分析目的和图表 ID。",
+                "stdout": str(execution.stdout).strip()[: self.max_repair_stdout_chars],
             }
-            repaired = await self._complete_json(
-                repair_payload,
-                system_prompt=self.ANALYSIS_SYSTEM,
-                user_prompt=self._render_prompt(self.CODE_FIX_PROMPT, repair_payload),
-            )
-            repaired_plan = self._validate_plan(repaired)
-            if set(repaired_plan["chart_ids"]) - known_chart_ids:
-                raise ValueError("CodeWizard 修复代码引用了不存在的图表 ID")
-            plan = repaired_plan
+            try:
+                repair_result = await self._complete_json(
+                    repair_payload,
+                    system_prompt=self.ANALYSIS_SYSTEM,
+                    user_prompt=self.CODE_FIX_PROMPT.format(
+                        code=repair_payload["code"],
+                        error=repair_payload["error"],
+                        stdout=repair_payload["stdout"],
+                    ),
+                    temperature=0.2,
+                )
+                fixed = self._validate_fix(repair_result)
+            except Exception as exc:
+                state.logs.append(
+                    {
+                        "agent": self.name,
+                        "event": "code_repair_skipped",
+                        "reason": str(exc),
+                    }
+                )
+                break
+            plan["code"] = fixed["fixed_code"]
+            if fixed["error_analysis"] or fixed["fix_description"]:
+                state.logs.append(
+                    {
+                        "agent": self.name,
+                        "event": "code_repaired",
+                        "error_analysis": fixed["error_analysis"],
+                        "fix_description": fixed["fix_description"],
+                        "attempt": attempt + 1,
+                    }
+                )
+
         state.phase = "analyzing"
+        await self._generate_charts(state)
         return state
 
     @staticmethod
-    def _data_point_summaries(data_points: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        return [
-            {
-                "id": point.get("id", ""),
-                "name": point.get("name", ""),
-                "value": point.get("value"),
-                "unit": point.get("unit", ""),
-                "year": point.get("year"),
-                "source": point.get("source", ""),
-            }
-            for point in data_points[:20]
-        ]
+    def _format_data_points(data_points: list[dict[str, Any]]) -> str:
+        """Format data as readable metric/value/unit/year lines."""
 
-    @staticmethod
-    def _fact_summaries(facts: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        return [
-            {
-                "content": str(fact.get("content", "")).strip()[:300],
-                "source_url": fact.get("source_url", ""),
-                "source_title": fact.get("source_title", ""),
-            }
-            for fact in facts
-        ]
-
-    def _charts_for_analysis(self, charts: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        """Limit chart context to the first two chapter scopes like CodeWizard."""
-
-        section_ids: list[str] = []
-        selected: list[dict[str, Any]] = []
-        for chart in charts:
-            section_id = str(chart.get("section_id", "") or "analysis").strip()
-            if section_id not in section_ids and len(section_ids) >= self.max_chart_sections:
+        lines: list[str] = []
+        for point in data_points:
+            if not isinstance(point, dict):
                 continue
-            if section_id not in section_ids:
-                section_ids.append(section_id)
-            selected.append(chart)
-        return selected
+            name = str(point.get("name", "未知指标"))
+            value = point.get("value", "未知")
+            unit = str(point.get("unit", "") or "")
+            year = point.get("year", "N/A")
+            suffix = f" {unit}" if unit else ""
+            lines.append(f"- {name}: {value}{suffix} ({year})")
+        return "\n".join(lines)
 
     @staticmethod
     def _validate_plan(value: Any) -> dict[str, Any]:
         if not isinstance(value, dict):
             raise ValueError("CodeWizard 返回结果必须是对象")
 
-        code = str(value.get("code", "")).strip()
+        raw_code = value.get("code", "")
+        if isinstance(raw_code, list):
+            raw_code = "\n".join(str(line) for line in raw_code)
+        code = str(raw_code).strip()
         if not code:
             raise ValueError("CodeWizard 返回结果缺少 code")
 
-        purpose = str(value.get("purpose", "")).strip()
-        if not purpose:
-            raise ValueError("CodeWizard 返回结果缺少 purpose")
+        # analysis_plan is the reference field; purpose remains accepted for
+        # compatibility with earlier local fixtures.
+        analysis_plan = str(
+            value.get("analysis_plan", value.get("purpose", ""))
+        ).strip()
+        if not analysis_plan:
+            raise ValueError("CodeWizard 返回结果缺少 analysis_plan")
 
         expected_outputs = value.get("expected_outputs", [])
         if not isinstance(expected_outputs, list) or not all(
@@ -166,18 +384,149 @@ import、文件、网络、进程或动态执行。"""
             raise ValueError("CodeWizard expected_outputs 必须是字符串列表")
 
         chart_ids = value.get("chart_ids", [])
-        if not isinstance(chart_ids, list) or not all(
-            isinstance(item, str) and item.strip() for item in chart_ids
-        ):
-            raise ValueError("CodeWizard chart_ids 必须是字符串列表")
-
-        normalized_chart_ids = [item.strip() for item in chart_ids]
-        if len(normalized_chart_ids) != len(set(normalized_chart_ids)):
-            raise ValueError("CodeWizard chart_ids 不能重复")
-
+        if not isinstance(chart_ids, list):
+            chart_ids = []
+        # Preserve order while dropping malformed and duplicate legacy values.
+        normalized_chart_ids = list(
+            dict.fromkeys(
+                item.strip()
+                for item in chart_ids
+                if isinstance(item, str) and item.strip()
+            )
+        )
         return {
+            "analysis_plan": analysis_plan,
             "code": code,
-            "purpose": purpose,
             "expected_outputs": [item.strip() for item in expected_outputs],
             "chart_ids": normalized_chart_ids,
         }
+
+    @staticmethod
+    def _validate_fix(value: Any) -> dict[str, str]:
+        if not isinstance(value, dict):
+            raise ValueError("CodeWizard 修复结果必须是对象")
+        raw_code = value.get("fixed_code", "")
+        if isinstance(raw_code, list):
+            raw_code = "\n".join(str(line) for line in raw_code)
+        fixed_code = str(raw_code).strip()
+        if not fixed_code:
+            raise ValueError("CodeWizard 修复结果缺少 fixed_code")
+        return {
+            "fixed_code": fixed_code,
+            "error_analysis": str(value.get("error_analysis", "")).strip(),
+            "fix_description": str(value.get("fix_description", "")).strip(),
+        }
+
+    @classmethod
+    def _select_chart_sections(
+        cls, outline: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        marked = [
+            section
+            for section in outline
+            if isinstance(section, dict) and section.get("requires_chart")
+        ]
+        candidates = marked if marked else [
+            section for section in outline if isinstance(section, dict)
+        ][: cls.max_chart_sections]
+        return candidates[: cls.max_chart_sections]
+
+    @staticmethod
+    def _section_data(
+        state: ResearchState, section_id: str
+    ) -> list[dict[str, Any]]:
+        related: list[dict[str, Any]] = []
+        for fact in state.facts:
+            if not isinstance(fact, dict):
+                continue
+            related_sections = fact.get("related_sections", [])
+            if not isinstance(related_sections, list):
+                related_sections = [related_sections] if related_sections else []
+            if section_id not in related_sections:
+                continue
+            data_points = fact.get("data_points", [])
+            if isinstance(data_points, list):
+                related.extend(point for point in data_points if isinstance(point, dict))
+
+        # Preserve the reference flow: section-linked fact data comes first,
+        # followed by the first ten globally extracted data points.
+        related.extend(
+            point for point in state.data_points[:10] if isinstance(point, dict)
+        )
+        return related
+
+    async def _generate_charts(self, state: ResearchState) -> None:
+        """Generate chart code for reference section scopes without executing it."""
+        sections = self._select_chart_sections(state.outline)
+        for section in sections:
+            section_id = str(section.get("id", "")).strip()
+            data = self._section_data(state, section_id)
+            if not data:
+                continue
+
+            title = str(section.get("title", "研究章节"))
+            chart_type = (
+                "bar" if section.get("section_type") == "quantitative" else "line"
+            )
+            payload = {
+                "mode": "chart_generation",
+                "query": title,
+                "section_id": section_id,
+                "chart_type": chart_type,
+                "title": f"{title}分析",
+                "data": data,
+            }
+            try:
+                result = await self._complete_json(
+                    payload,
+                    system_prompt=self.CHART_SYSTEM,
+                    user_prompt=self.CHART_PROMPT.format(
+                        topic=title,
+                        chart_type=chart_type,
+                        title=payload["title"],
+                        data=json.dumps(data, ensure_ascii=False, indent=2),
+                    ),
+                    temperature=0.2,
+                )
+                code = self._validate_chart_code(result)
+            except Exception as exc:
+                state.logs.append(
+                    {
+                        "agent": self.name,
+                        "event": "chart_generation_skipped",
+                        "section_id": section_id,
+                        "section_title": title,
+                        "data_point_count": len(data),
+                        "reason": f"图表代码生成失败：{exc}",
+                    }
+                )
+                continue
+
+            limitation = (
+                "当前 RestrictedCodeExecutor 不支持 pandas/matplotlib、图片文件输出或图片产物；"
+                "绘图代码仅记录，未执行。DataAnalyst 的 ECharts 配置仍可用。"
+            )
+            state.logs.append(
+                {
+                    "agent": self.name,
+                    "event": "chart_generation_skipped",
+                    "section_id": section_id,
+                    "section_title": title,
+                    "data_point_count": len(data),
+                    "code": code,
+                    "chart_description": str(result.get("chart_description", "")).strip(),
+                    "reason": limitation,
+                }
+            )
+
+    @staticmethod
+    def _validate_chart_code(value: Any) -> str:
+        if not isinstance(value, dict):
+            raise ValueError("CodeWizard 图表结果必须是对象")
+        raw_code = value.get("code", "")
+        if isinstance(raw_code, list):
+            raw_code = "\n".join(str(line) for line in raw_code)
+        code = str(raw_code).strip()
+        if not code:
+            raise ValueError("CodeWizard 图表结果缺少 code")
+        return code
