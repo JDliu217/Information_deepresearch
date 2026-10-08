@@ -7,6 +7,7 @@ Agent 只依赖这里定义的接口，不直接依赖某一家模型服务的 S
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+import json
 from typing import Any
 
 
@@ -306,7 +307,13 @@ class MockLLMClient(LLMClient):
                 lines.append(f"- {content}{citation}")
             if len(lines) == 1:
                 lines.append("当前章节还没有可引用的事实。")
-            return "\n".join(lines)
+            content = "\n".join(lines)
+            if json_mode:
+                return json.dumps(
+                    {"content": content, "key_points": [], "citations": []},
+                    ensure_ascii=False,
+                )
+            return content
 
         if payload.get("mode") == "revision":
             original = str(payload.get("original_content", "")).strip()
@@ -324,7 +331,18 @@ class MockLLMClient(LLMClient):
                 source_url = str(fact.get("source_url", "")).strip()
                 if content and source_url and content not in original:
                     lines.append(f"- {content} ([来源]({source_url}))")
-            return "\n".join(lines).strip()
+            content = "\n".join(lines).strip()
+            if json_mode:
+                return json.dumps(
+                    {
+                        "revised_content": content,
+                        "changes_made": [],
+                        "addressed_issues": [],
+                        "unable_to_address": [],
+                    },
+                    ensure_ascii=False,
+                )
+            return content
 
         if payload.get("mode") == "report":
             outline = payload.get("outline", [])
@@ -387,7 +405,18 @@ class MockLLMClient(LLMClient):
                     "以上结论需要结合更多官方统计和行业报告继续验证。",
                 ]
             )
-            return "\n".join(lines)
+            content = "\n".join(lines)
+            if json_mode:
+                return json.dumps(
+                    {
+                        "full_report": content,
+                        "executive_summary": "",
+                        "conclusions": [],
+                        "references": [],
+                    },
+                    ensure_ascii=False,
+                )
+            return content
 
         facts = payload.get("facts", [])
         lines = [
@@ -421,4 +450,15 @@ class MockLLMClient(LLMClient):
                 "以上结论需要结合更多官方统计和行业报告继续验证。",
             ]
         )
-        return "\n".join(lines)
+        content = "\n".join(lines)
+        if json_mode:
+            return json.dumps(
+                {
+                    "full_report": content,
+                    "executive_summary": "",
+                    "conclusions": [],
+                    "references": [],
+                },
+                ensure_ascii=False,
+            )
+        return content

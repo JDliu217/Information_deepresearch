@@ -1,4 +1,5 @@
 import asyncio
+import json
 import unittest
 
 from app.agents.data_analyst import DataAnalystAgent
@@ -12,6 +13,27 @@ from app.domain.state import ResearchState
 
 
 class WriterAgentTests(unittest.TestCase):
+    def test_mock_writer_returns_json_for_each_writer_mode(self):
+        async def run():
+            client = MockLLMClient()
+            responses = {}
+            for mode, payload in (
+                ("section", {"query": "测试问题", "section": {"title": "章节"}}),
+                ("report", {"query": "测试问题", "outline": [], "draft_sections": {}}),
+                ("revision", {"query": "测试问题", "original_content": "报告"}),
+            ):
+                response = await client.complete_text(
+                    "writer", {**payload, "mode": mode}, json_mode=True
+                )
+                responses[mode] = json.loads(response)
+            return responses
+
+        responses = asyncio.run(run())
+
+        self.assertIn("content", responses["section"])
+        self.assertIn("full_report", responses["report"])
+        self.assertIn("revised_content", responses["revision"])
+
     def test_writer_revision_uses_bounded_report_feedback_and_new_facts(self):
         class CapturingWriterClient(MockLLMClient):
             def __init__(self):
@@ -19,7 +41,7 @@ class WriterAgentTests(unittest.TestCase):
 
             async def complete_text(self, role, payload, system_prompt="", user_prompt=""):
                 self.payload = payload
-                return "修订后的报告"
+                return json.dumps({"revised_content": "修订后的报告"}, ensure_ascii=False)
 
         async def run():
             client = CapturingWriterClient()
@@ -131,10 +153,17 @@ class WriterAgentTests(unittest.TestCase):
 
     def test_writer_falls_back_to_drafted_sections_when_synthesis_json_is_incomplete(self):
         class IncompleteSynthesisClient(MockLLMClient):
-            async def complete_text(self, role, payload, system_prompt="", user_prompt=""):
+            async def complete_text(
+                self, role, payload, system_prompt="", user_prompt="", json_mode=False
+            ):
                 if payload.get("mode") == "report":
-                    return '{"executive_summary": "摘要"}'
-                return await super().complete_text(role, payload, system_prompt, user_prompt)
+                    return (
+                        '{"executive_summary": "摘要", "references": '
+                        '[{"title": "不应追加", "url": "https://example.com"}]}'
+                    )
+                return await super().complete_text(
+                    role, payload, system_prompt, user_prompt, json_mode=json_mode
+                )
 
         state = ResearchState("测试问题")
         state.outline = [{"id": "sec-1", "title": "章节一", "description": "描述"}]
@@ -148,12 +177,30 @@ class WriterAgentTests(unittest.TestCase):
 
         self.assertTrue(result.final_report.startswith("# 测试问题 研究报告"))
         self.assertIn("有来源的事实", result.final_report)
+        self.assertEqual(result.references, [])
 
-    def test_writer_skips_untrusted_citation_url(self):
+    def test_writer_appends_citations_and_deduplicates_only_exact_synthesis_references(self):
         class CitationClient(MockLLMClient):
             async def complete_text(self, role, payload, system_prompt="", user_prompt=""):
                 if payload.get("mode") == "section":
-                    return '{"content":"正文","citations":[{"source":"未知","url":"https://untrusted.example"}]}'
+                    return (
+                        '{"content":"正文","citations":['
+                        '{"source":"未知","url":"https://untrusted.example"},'
+                        '{"source":"未知","url":"https://untrusted.example"}]}'
+                    )
+                if payload.get("mode") == "report":
+                    reference = {
+                        "id": 10,
+                        "title": "模型给出的来源",
+                        "url": "https://also-untrusted.example",
+                    }
+                    return json.dumps(
+                        {
+                            "full_report": "完整报告",
+                            "references": [reference, reference],
+                        },
+                        ensure_ascii=False,
+                    )
                 return await super().complete_text(role, payload, system_prompt, user_prompt)
 
         state = ResearchState("测试问题")
@@ -161,7 +208,18 @@ class WriterAgentTests(unittest.TestCase):
         state.facts = [{"content": "事实", "source_url": "https://example.com/source"}]
         result = asyncio.run(WriterAgent(CitationClient()).run(state))
 
-        self.assertEqual(result.references, [])
+        self.assertEqual(
+            result.references,
+            [
+                {"id": 1, "marker": None, "source": "未知", "url": "https://untrusted.example"},
+                {"id": 2, "marker": None, "source": "未知", "url": "https://untrusted.example"},
+                {
+                    "id": 10,
+                    "title": "模型给出的来源",
+                    "url": "https://also-untrusted.example",
+                },
+            ],
+        )
 
     def test_writer_prefers_facts_from_the_matching_section(self):
         async def run():
@@ -192,6 +250,22 @@ class WriterAgentTests(unittest.TestCase):
         self.assertNotIn("B 事实", state.draft_sections["sec-a"])
         self.assertIn("B 事实", state.draft_sections["sec-b"])
         self.assertNotIn("A 事实", state.draft_sections["sec-b"])
+
+    def test_writer_rejects_non_json_text_as_structured_output(self):
+        content, result = WriterAgent._parse_writing_response(
+            "这是一段普通文本，不是 JSON。", "content"
+        )
+
+        self.assertEqual(content, "")
+        self.assertEqual(result, {})
+
+    def test_writer_parser_accepts_json_embedded_in_model_prose(self):
+        content, result = WriterAgent._parse_writing_response(
+            '结果如下： {"content":"章节正文"}', "content"
+        )
+
+        self.assertEqual(content, "章节正文")
+        self.assertEqual(result, {"content": "章节正文"})
 
 
 if __name__ == "__main__":

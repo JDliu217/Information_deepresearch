@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import json
 import re
 from collections.abc import Callable
@@ -298,7 +299,18 @@ class WriterAgent(BaseAgent):
 
             section["status"] = "drafted"
             draft_sections[section_id] = section_content
-            self._merge_report_references(state, section_result.get("citations", []))
+            # LeadWriter appends every citation returned for a drafted section.
+            # Keep the same behavior here; source validation belongs to the
+            # upstream evidence pipeline, not to the Writer's reference merge.
+            for citation in section_result.get("citations", []):
+                state.references.append(
+                    {
+                        "id": len(state.references) + 1,
+                        "marker": citation.get("marker"),
+                        "source": citation.get("source"),
+                        "url": citation.get("url", ""),
+                    }
+                )
             normalized_outline.append(section)
             self._emit_progress(
                 state,
@@ -357,6 +369,7 @@ class WriterAgent(BaseAgent):
             max_tokens=16000,
         )
         report, report_result = self._parse_writing_response(report_response, "full_report")
+        has_synthesis_report = bool(report)
         if not report:
             report = f"# {state.query} 研究报告\n\n" + "\n\n".join(
                 f"## {section.get('title', section['id'])}\n\n{draft_sections[section['id']]}"
@@ -367,7 +380,13 @@ class WriterAgent(BaseAgent):
         state.outline = normalized_outline
         state.draft_sections = draft_sections
         state.final_report = report
-        self._merge_report_references(state, report_result.get("references", []))
+        if has_synthesis_report:
+            # Match LeadWriter: synthesis references are appended only after a
+            # complete report was produced, unless the exact same value is
+            # already present. The objects are not normalized or URL-filtered.
+            for reference in report_result.get("references", []):
+                if reference not in state.references:
+                    state.references.append(reference)
         state.phase = "reviewing"
         self._emit_progress(
             state,
@@ -489,43 +508,93 @@ class WriterAgent(BaseAgent):
 
     @staticmethod
     def _parse_writing_response(response: str, field: str) -> tuple[str, dict]:
-        """Interpret structured Writer output; local mock text remains accepted."""
+        """Read a structured response like LeadWriter.parse_json_response.
 
-        raw = response.strip()
-        match = re.fullmatch(r"```(?:json)?\s*([\s\S]*?)\s*```", raw, re.IGNORECASE)
-        candidate = match.group(1) if match else raw
-        try:
-            parsed = json.loads(candidate)
-        except json.JSONDecodeError:
-            return ("", {}) if candidate.lstrip().startswith(("{", "[")) else (raw, {})
-        if not isinstance(parsed, dict):
+        Plain prose is not accepted as a successful response. The reference
+        Writer requests JSON and stores content only when the parsed object
+        contains the expected field.
+        """
+
+        parsed = WriterAgent._parse_json_response(response)
+        if not parsed:
             return "", {}
         content = parsed.get(field)
-        return content.strip() if isinstance(content, str) else "", parsed
+        return content if isinstance(content, str) else "", parsed
 
     @staticmethod
-    def _merge_report_references(state: ResearchState, references: object) -> None:
-        if not isinstance(references, list):
-            return
-        known_urls = {str(item.get("url", "")).strip() for item in state.references}
-        allowed_urls = {str(item.get("url", "")).strip() for item in state.raw_sources}
-        allowed_urls.update(str(item.get("source_url", "")).strip() for item in state.facts)
-        for reference in references:
-            if not isinstance(reference, dict):
-                continue
-            url = str(reference.get("url", "")).strip()
-            if not url or url not in allowed_urls or url in known_urls:
-                continue
-            state.references.append({
-                "id": len(state.references) + 1,
-                "marker": reference.get("marker"),
-                "source": reference.get("source") or reference.get("title", ""),
-                "title": reference.get("title") or reference.get("source", ""),
-                "url": url,
-                "author": reference.get("author", ""),
-                "date": reference.get("date", ""),
-            })
-            known_urls.add(url)
+    def _parse_json_response(response: str) -> dict:
+        """Parse model JSON, including the recovery steps used by BaseAgent."""
+
+        if not isinstance(response, str):
+            return {}
+
+        def fix_escaped_values(value: Any, key: str | None = None) -> Any:
+            if isinstance(value, dict):
+                return {name: fix_escaped_values(item, name) for name, item in value.items()}
+            if isinstance(value, list):
+                return [fix_escaped_values(item, key) for item in value]
+            if not isinstance(value, str) or key in {"code", "fixed_code", "revised_content"}:
+                return value
+            return (
+                value.replace("\\\\n", "\n")
+                .replace("\\n", "\n")
+                .replace("\\\\r", "\r")
+                .replace("\\r", "\r")
+                .replace("\\\\t", "\t")
+                .replace("\\t", "\t")
+            )
+
+        def try_parse(candidate: str) -> dict:
+            candidate = candidate.strip()
+            if candidate.startswith("\ufeff"):
+                candidate = candidate[1:]
+            try:
+                result = json.loads(candidate)
+                return fix_escaped_values(result) if isinstance(result, dict) else {}
+            except json.JSONDecodeError:
+                pass
+
+            # These repair steps mirror BaseAgent.parse_json_response in the
+            # reference project for common JSON formatting mistakes.
+            repaired = re.sub(r'(?<!\\)\\(?!["\\/bfnrtu])', "", candidate)
+            repaired = re.sub(r"//.*?$", "", repaired, flags=re.MULTILINE)
+            repaired = re.sub(r"/\*.*?\*/", "", repaired, flags=re.DOTALL)
+            repaired = re.sub(r",(\s*[}\]])", r"\1", repaired)
+            repaired = re.sub(r'([}\]])(\s*)([{\[])', r"\1,\2\3", repaired)
+            repaired = re.sub(r"(\{|,)\s*(\w+)\s*:", r'\1"\2":', repaired)
+            try:
+                result = json.loads(repaired)
+                return fix_escaped_values(result) if isinstance(result, dict) else {}
+            except json.JSONDecodeError:
+                pass
+
+            # Keep the reference parser's Python-literal fallback for outputs
+            # that look like a dict but use single quotes/JSON booleans.
+            python_candidate = re.sub(r"\btrue\b", "True", candidate)
+            python_candidate = re.sub(r"\bfalse\b", "False", python_candidate)
+            python_candidate = re.sub(r"\bnull\b", "None", python_candidate)
+            try:
+                literal = ast.literal_eval(python_candidate)
+                return literal if isinstance(literal, dict) else {}
+            except (SyntaxError, ValueError):
+                return {}
+
+        parsed = try_parse(response)
+        if parsed:
+            return parsed
+
+        code_block = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", response, re.IGNORECASE)
+        if code_block:
+            parsed = try_parse(code_block.group(1))
+            if parsed:
+                return parsed
+
+        start, end = response.find("{"), response.rfind("}")
+        if start >= 0 and end > start:
+            parsed = try_parse(response[start : end + 1])
+            if parsed:
+                return parsed
+        return {}
 
     @staticmethod
     def _facts_for_section(
