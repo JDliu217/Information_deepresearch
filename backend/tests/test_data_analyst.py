@@ -91,7 +91,7 @@ class DataAnalystAgentTests(unittest.TestCase):
             "dp-1",
         )
 
-    def test_data_analyst_merges_its_graph_without_replacing_fact_extractor_graph(self):
+    def test_data_analyst_replaces_fact_extractor_graph_like_reference(self):
         class GraphAnalysisClient(LLMClient):
             async def complete_json(self, role, payload, system_prompt="", user_prompt=""):
                 if payload["mode"] == "data_extraction":
@@ -148,16 +148,16 @@ class DataAnalystAgentTests(unittest.TestCase):
 
         nodes_by_name = {node["name"]: node for node in state.knowledge_graph["nodes"]}
         self.assertEqual(set(nodes_by_name), {"已有实体", "新增实体"})
-        self.assertEqual(nodes_by_name["已有实体"]["type"], "industry")
-        self.assertEqual(nodes_by_name["已有实体"]["relations"], ["受市场影响"])
-        self.assertEqual(nodes_by_name["已有实体"]["importance"], 9)
-        self.assertEqual(nodes_by_name["新增实体"]["id"], "node_0_data_analyst")
-        self.assertEqual(len(state.knowledge_graph["edges"]), 2)
+        self.assertEqual(nodes_by_name["已有实体"]["type"], "company")
+        self.assertNotIn("受市场影响", str(state.knowledge_graph))
+        self.assertEqual(nodes_by_name["已有实体"]["size"], 47)
+        self.assertEqual(nodes_by_name["新增实体"]["size"], 41)
+        self.assertEqual(len(state.knowledge_graph["edges"]), 1)
         self.assertEqual(
-            state.knowledge_graph["edges"][1],
+            state.knowledge_graph["edges"][0],
             {
-                "source": "node_0",
-                "target": "node_0_data_analyst",
+                "source": "analyst-existing",
+                "target": "node_0",
                 "relation": "推出",
             },
         )

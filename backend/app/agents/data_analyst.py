@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import uuid
 from typing import Any
 
@@ -248,13 +247,9 @@ class DataAnalystAgent(BaseAgent):
         knowledge_graph = await self._build_knowledge_graph(state)
         charts = await self._generate_charts(state, extracted_data)
 
-        # FactExtractor has already accumulated entities and relations in the
-        # shared graph. Add DataAnalyst's richer graph to that result instead
-        # of replacing evidence collected earlier in the run.
-        state.knowledge_graph = self._merge_knowledge_graph(
-            state.knowledge_graph,
-            knowledge_graph,
-        )
+        # DeepScout's active DataAnalyst stage replaces the graph built during
+        # source analysis with its graph from the first 15 facts.
+        state.knowledge_graph = knowledge_graph
         state.charts.extend(charts)
         state.phase = "analyzing"
         return state
@@ -456,90 +451,6 @@ class DataAnalystAgent(BaseAgent):
         if not all(isinstance(edge, dict) for edge in edges):
             raise ValueError("DataAnalyst 知识图谱边必须是对象")
         return {"nodes": normalized_nodes, "edges": edges}
-
-    @staticmethod
-    def _merge_knowledge_graph(
-        existing: Any,
-        discovered: dict[str, Any],
-    ) -> dict[str, Any]:
-        """Merge DataAnalyst output while retaining FactExtractor's graph."""
-
-        if not isinstance(existing, dict):
-            raise ValueError("已有 knowledge_graph 必须是对象")
-        existing_nodes = existing.get("nodes", []) or []
-        existing_edges = existing.get("edges", []) or []
-        if not isinstance(existing_nodes, list) or not isinstance(existing_edges, list):
-            raise ValueError("已有 knowledge_graph 的 nodes 和 edges 必须是列表")
-        if not all(isinstance(node, dict) for node in existing_nodes):
-            raise ValueError("已有 knowledge_graph 节点必须是对象")
-        if not all(isinstance(edge, dict) for edge in existing_edges):
-            raise ValueError("已有 knowledge_graph 边必须是对象")
-
-        nodes = [dict(node) for node in existing_nodes]
-        edges = [dict(edge) for edge in existing_edges]
-        node_by_name = {
-            str(node.get("name", "")).strip(): node
-            for node in nodes
-            if str(node.get("name", "")).strip()
-        }
-        node_by_id = {
-            str(node.get("id", "")).strip(): node
-            for node in nodes
-            if str(node.get("id", "")).strip()
-        }
-        id_remap: dict[str, str] = {}
-
-        for incoming in discovered["nodes"]:
-            node = dict(incoming)
-            node_id = str(node.get("id", "")).strip()
-            name = str(node.get("name", "")).strip()
-            matched = node_by_name.get(name) if name else None
-            if matched is None and node_id:
-                id_match = node_by_id.get(node_id)
-                if id_match is not None and not name:
-                    matched = id_match
-            if matched is not None:
-                if node_id and matched.get("id"):
-                    id_remap[node_id] = str(matched["id"])
-                # Existing FactExtractor values remain authoritative. Add
-                # DataAnalyst metadata only where the existing node is empty.
-                for key, value in node.items():
-                    if key not in matched or matched[key] in (None, ""):
-                        matched[key] = value
-                continue
-
-            if node_id and node_id in node_by_id:
-                base_id = f"{node_id}_data_analyst"
-                unique_id = base_id
-                suffix = 2
-                while unique_id in node_by_id:
-                    unique_id = f"{base_id}_{suffix}"
-                    suffix += 1
-                node["id"] = unique_id
-                id_remap[node_id] = unique_id
-                node_id = unique_id
-            nodes.append(node)
-            if name:
-                node_by_name[name] = node
-            if node_id:
-                node_by_id[node_id] = node
-
-        edge_signatures = {
-            json.dumps(edge, ensure_ascii=False, sort_keys=True, default=str)
-            for edge in edges
-        }
-        for incoming_edge in discovered["edges"]:
-            edge = dict(incoming_edge)
-            for endpoint in ("source", "target"):
-                value = str(edge.get(endpoint, "")).strip()
-                if value in id_remap:
-                    edge[endpoint] = id_remap[value]
-            signature = json.dumps(edge, ensure_ascii=False, sort_keys=True, default=str)
-            if signature not in edge_signatures:
-                edges.append(edge)
-                edge_signatures.add(signature)
-
-        return {**existing, "nodes": nodes, "edges": edges}
 
     @classmethod
     def _validate_result(
