@@ -53,6 +53,8 @@ class OpenAICompatibleLLMClient(LLMClient):
         payload: dict[str, Any],
         system_prompt: str = "",
         user_prompt: str = "",
+        temperature: float | None = None,
+        max_tokens: int | None = None,
     ) -> dict[str, Any]:
         content = await self._complete(
             role,
@@ -60,6 +62,8 @@ class OpenAICompatibleLLMClient(LLMClient):
             system_prompt=system_prompt,
             user_prompt=user_prompt,
             json_mode=True,
+            temperature=temperature,
+            max_tokens=max_tokens,
         )
         parsed = self._parse_json(content)
         if not isinstance(parsed, dict):
@@ -72,13 +76,18 @@ class OpenAICompatibleLLMClient(LLMClient):
         payload: dict[str, Any],
         system_prompt: str = "",
         user_prompt: str = "",
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+        json_mode: bool = False,
     ) -> str:
         return await self._complete(
             role,
             payload,
             system_prompt=system_prompt,
             user_prompt=user_prompt,
-            json_mode=False,
+            json_mode=json_mode,
+            temperature=temperature,
+            max_tokens=max_tokens,
         )
 
     async def _complete(
@@ -89,6 +98,8 @@ class OpenAICompatibleLLMClient(LLMClient):
         system_prompt: str,
         user_prompt: str,
         json_mode: bool,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
     ) -> str:
         model_settings = self.settings.for_agent(role)
         # Prompt selection belongs to each Agent. Empty prompts remain accepted
@@ -106,8 +117,10 @@ class OpenAICompatibleLLMClient(LLMClient):
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
-            "temperature": model_settings.temperature,
-            "max_tokens": model_settings.max_tokens,
+            "temperature": (
+                model_settings.temperature if temperature is None else temperature
+            ),
+            "max_tokens": model_settings.max_tokens if max_tokens is None else max_tokens,
         }
         if self._uses_deepseek(self.settings.base_url):
             thinking = self.settings.thinking_for(role)

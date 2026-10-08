@@ -289,6 +289,7 @@ class WriterAgent(BaseAgent):
                 ),
                 json_mode=True,
                 temperature=0.4,
+                max_tokens=16000,
             )
             section_content, section_result = self._parse_writing_response(section_response, "content")
             if not section_content:
@@ -353,6 +354,7 @@ class WriterAgent(BaseAgent):
             ),
             json_mode=True,
             temperature=0.3,
+            max_tokens=16000,
         )
         report, report_result = self._parse_writing_response(report_response, "full_report")
         if not report:
@@ -440,6 +442,7 @@ class WriterAgent(BaseAgent):
             ),
             json_mode=True,
             temperature=0.3,
+            max_tokens=16000,
         )
         revised, revision_result = self._parse_writing_response(
             revised_response, "revised_content"

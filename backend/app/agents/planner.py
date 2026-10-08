@@ -123,6 +123,7 @@ class PlannerAgent(BaseAgent):
                 system_prompt=self.PLANNING_SYSTEM,
                 user_prompt=prompt,
                 temperature=0.3,
+                max_tokens=16000,
             )
             if result.get("sec_1_title") and not result.get("outline"):
                 result = self._convert_flat_to_outline(result)
@@ -169,6 +170,7 @@ class PlannerAgent(BaseAgent):
             system_prompt=self.PLANNING_SYSTEM,
             user_prompt=self.REVISION_PROMPT.format(**payload),
             temperature=0.3,
+            max_tokens=16000,
         )
         if result.get("needs_revision") and result.get("revised_outline"):
             state.outline = self._validate_outline(result["revised_outline"])

@@ -246,7 +246,8 @@ df = df.dropna()
                 query=state.query,
                 data_points=data_summary,
             ),
-            temperature=0.2,
+            temperature=0.3,
+            max_tokens=16000,
         )
         plan = self._validate_plan(response)
 
@@ -314,6 +315,7 @@ df = df.dropna()
                         stdout=repair_payload["stdout"],
                     ),
                     temperature=0.2,
+                    max_tokens=16000,
                 )
                 fixed = self._validate_fix(repair_result)
             except Exception as exc:
@@ -486,7 +488,8 @@ df = df.dropna()
                         title=payload["title"],
                         data=json.dumps(data, ensure_ascii=False, indent=2),
                     ),
-                    temperature=0.2,
+                    temperature=0.3,
+                    max_tokens=16000,
                 )
                 code = self._validate_chart_code(result)
             except Exception as exc:
