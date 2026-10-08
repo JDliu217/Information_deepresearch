@@ -22,7 +22,8 @@ class FactExtractorAgent(BaseAgent):
 
 只返回 JSON 对象：
 {
-  "extracted_facts": [], "hypothesis_evidence": [], "entities_discovered": [],
+  "extracted_facts": [], "hypothesis_evidence": [],
+  "entities_discovered": [{"name": "实体名称", "type": "company/person/policy/technology", "relations": ["关系描述"]}],
   "key_insights": [], "follow_up_queries": [], "source_tracing_queries": [],
   "missing_info": [], "source_quality_assessment": ""
 }
@@ -138,7 +139,12 @@ source_url。无法确认来源的事实应从结果中删除，不得猜测或�
                     fact["section_id"] = section_id
                     fact["section_title"] = str(payload["section"]["title"])
             all_facts.extend(facts)
-            all_entities.extend(self._validate_entities(result.get("entities_discovered", [])))
+            entity_warnings: list[str] = []
+            all_entities.extend(
+                self._validate_entities(
+                    result.get("entities_discovered", []), entity_warnings
+                )
+            )
             all_insights.extend(self._string_list(result.get("key_insights", [])))
             section_context = {
                 "section_id": section_id or "",
@@ -165,6 +171,13 @@ source_url。无法确认来源的事实应从结果中删除，不得猜测或�
                     "section_id": section_id,
                     "warning": "ignored_invalid_hypothesis_evidence",
                     "details": hypothesis_warnings[:10],
+                })
+            if entity_warnings:
+                analysis_notes.append({
+                    "agent": self.name,
+                    "section_id": section_id,
+                    "warning": "ignored_invalid_entities",
+                    "details": entity_warnings[:10],
                 })
 
         all_facts = self._deduplicate_facts(all_facts)
@@ -358,41 +371,60 @@ source_url。无法确认来源的事实应从结果中删除，不得猜测或�
         return context
 
     @staticmethod
-    def _validate_entities(value: Any) -> list[dict[str, Any]]:
-        """校验 LLM 返回的实体，统一成知识图谱可以使用的形状。"""
+    def _validate_entities(
+        value: Any,
+        warnings: list[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        """保留格式正确的可选实体，忽略坏项而不阻断核心事实提取。"""
+
+        def warn(message: str) -> None:
+            if warnings is not None and len(warnings) < 50:
+                warnings.append(message)
+
         if value is None:
             return []
         if not isinstance(value, list):
-            raise ValueError("FactExtractor 返回的 entities_discovered 必须是列表")
+            warn("entities_discovered 不是列表")
+            return []
 
         validated: list[dict[str, Any]] = []
         for index, item in enumerate(value, start=1):
             if not isinstance(item, dict):
-                raise ValueError(f"FactExtractor 的第 {index} 个实体不是对象")
+                warn(f"第 {index} 个实体不是对象")
+                continue
 
-            name = str(item.get("name", "")).strip()
-            if not name:
-                raise ValueError(f"FactExtractor 的第 {index} 个实体缺少 name")
+            raw_name = item.get("name")
+            if not isinstance(raw_name, str) or not raw_name.strip():
+                warn(f"第 {index} 个实体缺少 name")
+                continue
+            name = raw_name.strip()
 
             raw_relations = item.get("relations", [])
             if raw_relations is None:
                 raw_relations = []
             if not isinstance(raw_relations, list):
-                raise ValueError(
-                    f"FactExtractor 的第 {index} 个实体 relations 必须是列表"
-                )
+                warn(f"第 {index} 个实体 relations 不是列表，已忽略关系")
+                raw_relations = []
 
             relations: list[str] = []
             for relation_index, relation in enumerate(raw_relations, start=1):
                 if not isinstance(relation, str):
-                    raise ValueError(
-                        f"FactExtractor 的第 {index} 个实体第 {relation_index} 个关系必须是字符串"
+                    warn(
+                        f"第 {index} 个实体第 {relation_index} 个关系不是字符串"
                     )
+                    continue
                 relation = relation.strip()
                 if relation:
                     relations.append(relation)
 
-            entity_type = str(item.get("type") or "unknown").strip() or "unknown"
+            raw_entity_type = item.get("type")
+            if raw_entity_type is None:
+                entity_type = "unknown"
+            elif isinstance(raw_entity_type, str) and raw_entity_type.strip():
+                entity_type = raw_entity_type.strip()
+            else:
+                warn(f"第 {index} 个实体 type 无效，已使用 unknown")
+                entity_type = "unknown"
             validated.append(
                 {
                     "name": name,

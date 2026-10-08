@@ -434,20 +434,47 @@ class FactExtractorAgentTests(unittest.TestCase):
             },
         )
 
-    def test_fact_extractor_rejects_invalid_entity_relations(self):
+    def test_fact_extractor_ignores_invalid_entities_and_keeps_facts(self):
         state = ResearchState("测试问题")
         state.raw_sources = [
             {"title": "来源", "url": "https://example.com/1", "snippet": "证据"}
         ]
 
-        with self.assertRaisesRegex(ValueError, "relations 必须是列表"):
-            asyncio.run(
-                FactExtractorAgent(
-                    EntityFactClient(
-                        [{"name": "实体", "relations": "不是列表"}]
-                    )
-                ).run(state)
-            )
+        entities = [
+            "实体名不能由 Agent 猜测",
+            {"name": "有效实体", "relations": ["有效关系", None]},
+            {"name": "", "relations": []},
+            {"name": None, "relations": []},
+            {"name": "关系字段异常", "relations": "不是列表"},
+        ]
+        asyncio.run(FactExtractorAgent(EntityFactClient(entities)).run(state))
+
+        self.assertEqual(len(state.facts), 1)
+        self.assertEqual(
+            [node["name"] for node in state.knowledge_graph["nodes"]],
+            ["有效实体", "关系字段异常"],
+        )
+        self.assertEqual(
+            state.knowledge_graph["edges"],
+            [{"source": "有效实体", "relation": "有效关系"}],
+        )
+        self.assertTrue(
+            any(log.get("warning") == "ignored_invalid_entities" for log in state.logs)
+        )
+
+    def test_fact_extractor_ignores_non_list_entities(self):
+        state = ResearchState("测试问题")
+        state.raw_sources = [
+            {"title": "来源", "url": "https://example.com/1", "snippet": "证据"}
+        ]
+
+        asyncio.run(FactExtractorAgent(EntityFactClient("不是列表")).run(state))
+
+        self.assertEqual(len(state.facts), 1)
+        self.assertEqual(state.knowledge_graph["nodes"], [])
+        self.assertTrue(
+            any(log.get("warning") == "ignored_invalid_entities" for log in state.logs)
+        )
 
     def test_fact_extractor_rejects_unknown_source_url(self):
         state = ResearchState("测试问题")
