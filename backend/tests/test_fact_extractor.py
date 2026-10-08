@@ -12,7 +12,7 @@ from app.domain.state import ResearchState
 class BrokenFactClient(LLMClient):
     async def complete_json(self, role, payload):
         return {
-            "facts": [
+            "extracted_facts": [
                 {
                     "content": "这条事实引用了不存在的来源。",
                     "source_url": "https://unknown.example.com",
@@ -43,7 +43,17 @@ class HypothesisFactClient(LLMClient):
                     "hypothesis_support": self.support,
                 }
             )
-        return {"facts": facts}
+        return {
+            "extracted_facts": facts,
+            "hypothesis_evidence": [
+                {
+                    "hypothesis_id": self.hypothesis_id,
+                    "evidence_type": self.support,
+                    "evidence_summary": f"来自 {source['title']} 的证据",
+                }
+                for source in payload["sources"]
+            ],
+        }
 
     async def complete_text(self, role, payload):
         return ""
@@ -52,7 +62,7 @@ class HypothesisFactClient(LLMClient):
 class InvalidDataPointFactClient(LLMClient):
     async def complete_json(self, role, payload):
         return {
-            "facts": [
+            "extracted_facts": [
                 {
                     "content": "包含无效数据点的事实。",
                     "source_url": payload["sources"][0]["url"],
@@ -73,7 +83,7 @@ class EntityFactClient(LLMClient):
     async def complete_json(self, role, payload):
         source = payload["sources"][0]
         return {
-            "facts": [
+            "extracted_facts": [
                 {
                     "content": "一条用于构建知识图谱的事实。",
                     "source_url": source["url"],
@@ -155,7 +165,18 @@ class RepairingFactClient(LLMClient):
     async def complete_json(self, role, payload, system_prompt="", user_prompt=""):
         self.calls.append((payload, system_prompt, user_prompt))
         if len(self.calls) == 1:
-            return {"extracted_facts": [{"content": "首轮缺少来源 URL"}]}
+            source = payload["sources"][0]
+            return {
+                "extracted_facts": [
+                    {"content": "该条事实缺少来源 URL"},
+                    {
+                        "content": "同批次中另一条有效事实。",
+                        "source_name": source["source"],
+                        "source_url": source["url"],
+                        "credibility_score": 0.8,
+                    },
+                ]
+            }
         source = payload["sources"][0]
         return {
             "extracted_facts": [
@@ -280,7 +301,7 @@ class FactExtractorAgentTests(unittest.TestCase):
 
         self.assertEqual([fact["content"] for fact in state.facts], ["参考字段中的有效事实。"])
 
-    def test_fact_extractor_repairs_missing_source_url_once(self):
+    def test_fact_extractor_skips_malformed_fact_and_keeps_valid_sibling(self):
         client = RepairingFactClient()
         state = ResearchState("测试问题")
         state.raw_sources = [
@@ -294,14 +315,14 @@ class FactExtractorAgentTests(unittest.TestCase):
 
         asyncio.run(FactExtractorAgent(client).run(state))
 
-        self.assertEqual(len(client.calls), 2)
-        self.assertIn("source_url", client.calls[0][2])
-        self.assertIn("缺少 content 或 source_url", client.calls[1][0]["validation_error"])
-        self.assertIn("重新输出完整 JSON", client.calls[1][2])
+        self.assertEqual(len(client.calls), 1)
         self.assertEqual(len(state.facts), 1)
         self.assertEqual(state.facts[0]["source_url"], "https://example.com/source")
+        self.assertTrue(
+            any(log.get("warning") == "ignored_invalid_optional_fields" for log in state.logs)
+        )
 
-    def test_fact_extractor_still_rejects_unrepairable_unknown_source(self):
+    def test_fact_extractor_skips_unknown_source_url_without_persisting_it(self):
         class CountingBrokenFactClient(BrokenFactClient):
             def __init__(self):
                 self.calls = 0
@@ -316,27 +337,37 @@ class FactExtractorAgentTests(unittest.TestCase):
             {"title": "来源", "url": "https://example.com/source", "summary": "摘要"}
         ]
 
-        with self.assertRaisesRegex(ValueError, "事实格式修复失败.*未知来源"):
-            asyncio.run(FactExtractorAgent(client).run(state))
+        asyncio.run(FactExtractorAgent(client).run(state))
 
-        self.assertEqual(client.calls, 2)
+        self.assertEqual(client.calls, 1)
         self.assertEqual(state.facts, [])
 
     def test_fact_extractor_rejects_null_content_without_logging_values(self):
-        with self.assertRaisesRegex(ValueError, "content_present=False") as error:
-            FactExtractorAgent._validate_facts(
-                [{"content": None, "source_url": "https://example.com/source"}],
-                [{"url": "https://example.com/source"}],
-                [],
-            )
-
-        self.assertIn("fields=['content', 'source_url']", str(error.exception))
+        warnings = []
+        facts = FactExtractorAgent._validate_facts(
+            [{"content": None, "source_url": "https://example.com/source"}],
+            [{"url": "https://example.com/source"}],
+            [],
+            warnings,
+        )
+        self.assertEqual(facts, [])
+        self.assertTrue(any("缺少 content 或 source_url" in warning for warning in warnings))
 
     def test_fact_extractor_turns_raw_sources_into_facts(self):
+        class RepeatedEvidenceSearchClient(MockSearchClient):
+            async def search(self, query, limit=3):
+                results = await super().search(query, limit)
+                for result in results:
+                    result.snippet = "同一条模拟证据，用于明确验证来源间的事实去重。"
+                    result.summary = result.snippet
+                return results
+
         async def run_chain():
             state = ResearchState("中国新能源汽车行业的发展趋势是什么？")
             await PlannerAgent(MockLLMClient()).run(state)
-            await ResearcherAgent(MockSearchClient()).run(state)
+            # Deliberately repeat the evidence text across different URLs so
+            # this test covers Scout-compatible cross-source deduplication.
+            await ResearcherAgent(RepeatedEvidenceSearchClient()).run(state)
             await FactExtractorAgent(MockLLMClient()).run(state)
             return state
 
@@ -344,12 +375,12 @@ class FactExtractorAgentTests(unittest.TestCase):
 
         self.assertEqual(state.phase, "researching")
         self.assertEqual(len(state.raw_sources), 3)
-        self.assertEqual(len(state.facts), 3)
+        self.assertEqual(len(state.facts), 1)
         self.assertTrue(all(fact["source_url"] for fact in state.facts))
         self.assertTrue(all(0 <= fact["confidence"] <= 1 for fact in state.facts))
         self.assertEqual(
             {fact["section_id"] for fact in state.facts},
-            {"sec_1", "sec_2", "sec_3"},
+            {"sec_1"},
         )
         self.assertTrue(all(fact["section_title"] for fact in state.facts))
         self.assertTrue(
@@ -358,9 +389,9 @@ class FactExtractorAgentTests(unittest.TestCase):
         self.assertTrue(
             all(fact["hypothesis_support"] == "supports" for fact in state.facts)
         )
-        self.assertEqual(state.hypotheses[0]["status"], "supported")
-        self.assertEqual(len(state.hypotheses[0]["evidence_for"]), 3)
-        self.assertEqual(len(state.data_points), 3)
+        self.assertEqual(state.hypotheses[0]["status"], "unverified")
+        self.assertEqual(state.hypotheses[0]["evidence_for"], [])
+        self.assertEqual(len(state.data_points), 1)
         self.assertEqual(
             {point["name"] for point in state.data_points},
             {"模拟来源指标"},
@@ -414,7 +445,7 @@ class FactExtractorAgentTests(unittest.TestCase):
         )
         self.assertEqual(
             {node["id"] for node in state.knowledge_graph["nodes"]},
-            {"node_1", "node_2"},
+            {"node_0", "node_1"},
         )
         entity_a = next(
             node
@@ -422,7 +453,7 @@ class FactExtractorAgentTests(unittest.TestCase):
             if node["name"] == "实体 A"
         )
         self.assertEqual(entity_a["type"], "unknown")
-        self.assertEqual(len(state.knowledge_graph["edges"]), 2)
+        self.assertEqual(len(state.knowledge_graph["edges"]), 1)
         self.assertEqual(
             {
                 (edge["source"], edge["relation"])
@@ -430,7 +461,6 @@ class FactExtractorAgentTests(unittest.TestCase):
             },
             {
                 ("实体 A", "关联实体 B"),
-                ("实体 A", "关联实体 C"),
             },
         )
 
@@ -455,11 +485,11 @@ class FactExtractorAgentTests(unittest.TestCase):
             ["有效实体", "关系字段异常"],
         )
         self.assertEqual(
-            state.knowledge_graph["edges"],
-            [{"source": "有效实体", "relation": "有效关系"}],
+            [(edge["source"], edge["relation"]) for edge in state.knowledge_graph["edges"]],
+            [("有效实体", "有效关系")],
         )
         self.assertTrue(
-            any(log.get("warning") == "ignored_invalid_entities" for log in state.logs)
+            any(log.get("warning") == "ignored_invalid_optional_fields" for log in state.logs)
         )
 
     def test_fact_extractor_ignores_non_list_entities(self):
@@ -473,7 +503,7 @@ class FactExtractorAgentTests(unittest.TestCase):
         self.assertEqual(len(state.facts), 1)
         self.assertEqual(state.knowledge_graph["nodes"], [])
         self.assertTrue(
-            any(log.get("warning") == "ignored_invalid_entities" for log in state.logs)
+            any(log.get("warning") == "ignored_invalid_optional_fields" for log in state.logs)
         )
 
     def test_fact_extractor_rejects_unknown_source_url(self):
@@ -486,8 +516,37 @@ class FactExtractorAgentTests(unittest.TestCase):
             }
         ]
 
-        with self.assertRaisesRegex(ValueError, "未知来源"):
-            asyncio.run(FactExtractorAgent(BrokenFactClient()).run(state))
+        asyncio.run(FactExtractorAgent(BrokenFactClient()).run(state))
+        self.assertEqual(state.facts, [])
+        self.assertTrue(
+            any(log.get("warning") == "ignored_invalid_optional_fields" for log in state.logs)
+        )
+
+    def test_fact_extractor_maps_common_source_url_formatting_to_original(self):
+        state = ResearchState("测试问题")
+        state.raw_sources = [
+            {
+                "title": "已知来源",
+                "url": "https://Example.com/source",
+                "snippet": "摘要",
+            }
+        ]
+
+        class FormattingVariantClient(BrokenFactClient):
+            async def complete_json(self, role, payload):
+                return {
+                    "extracted_facts": [
+                        {
+                            "content": "来源支持的事实",
+                            "source_url": " https://example.com/source/ ",
+                        }
+                    ]
+                }
+
+        asyncio.run(FactExtractorAgent(FormattingVariantClient()).run(state))
+
+        self.assertEqual(len(state.facts), 1)
+        self.assertEqual(state.facts[0]["source_url"], "https://Example.com/source")
 
     def test_fact_extractor_requires_sources(self):
         with self.assertRaisesRegex(ValueError, "来源"):
@@ -542,7 +601,7 @@ class FactExtractorAgentTests(unittest.TestCase):
         self.assertEqual(len(state.facts), 1)
         self.assertNotIn("related_hypothesis", state.facts[0])
         self.assertTrue(
-            any(log.get("warning") == "ignored_invalid_hypothesis_evidence" for log in state.logs)
+            any(log.get("warning") == "ignored_invalid_optional_fields" for log in state.logs)
         )
 
     def test_fact_extractor_keeps_fact_when_hypothesis_support_is_invalid(self):
@@ -565,7 +624,7 @@ class FactExtractorAgentTests(unittest.TestCase):
         self.assertEqual(len(state.facts), 1)
         self.assertNotIn("hypothesis_support", state.facts[0])
         self.assertTrue(
-            any(log.get("warning") == "ignored_invalid_hypothesis_evidence" for log in state.logs)
+            any(log.get("warning") == "ignored_invalid_optional_fields" for log in state.logs)
         )
 
     def test_fact_extractor_keeps_only_valid_structured_hypothesis_evidence(self):
@@ -609,16 +668,21 @@ class FactExtractorAgentTests(unittest.TestCase):
 
         asyncio.run(FactExtractorAgent(HypothesisFactClient("neutral")).run(state))
 
-        self.assertEqual(state.hypotheses[0]["status"], "unverified")
+        self.assertEqual(state.hypotheses[0]["status"], "partially_supported")
 
-    def test_fact_extractor_rejects_invalid_data_point(self):
+    def test_fact_extractor_skips_invalid_data_point_but_keeps_fact(self):
         state = ResearchState("测试问题")
         state.raw_sources = [
             {"title": "来源", "url": "https://example.com/1", "snippet": "证据"}
         ]
 
-        with self.assertRaisesRegex(ValueError, "数据点缺少 name 或 value"):
-            asyncio.run(FactExtractorAgent(InvalidDataPointFactClient()).run(state))
+        asyncio.run(FactExtractorAgent(InvalidDataPointFactClient()).run(state))
+        self.assertEqual(len(state.facts), 1)
+        self.assertEqual(state.facts[0]["data_points"], [])
+        self.assertEqual(state.data_points, [])
+        self.assertTrue(
+            any(log.get("warning") == "ignored_invalid_optional_fields" for log in state.logs)
+        )
 
 
 if __name__ == "__main__":
