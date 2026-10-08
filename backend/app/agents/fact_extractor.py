@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime
 import hashlib
 import re
@@ -132,6 +133,7 @@ URL: {url}
     default_max_source_chars = 300
     default_max_sources_per_section = 15
     default_max_total_source_chars = 4_500
+    max_concurrent_sections = 3
 
     def __init__(
         self,
@@ -168,6 +170,7 @@ URL: {url}
         follow_up_contexts: dict[str, list[dict[str, str]]] = {}
         hypothesis_evidence: list[dict[str, Any]] = []
         analysis_notes: list[dict[str, Any]] = []
+        section_inputs: list[dict[str, Any]] = []
         for section_id, section_sources in sections:
             section = next(
                 (
@@ -197,13 +200,39 @@ URL: {url}
                 state.hypotheses,
                 source_context,
             )
-            result = await self._complete_json(
-                payload,
-                system_prompt=self.SEARCH_ANALYSIS_SYSTEM,
-                user_prompt=user_prompt,
-                temperature=0.2,
-                max_tokens=16000,
+            section_inputs.append(
+                {
+                    "section_id": section_id,
+                    "section_sources": section_sources,
+                    "processed_sources": processed_sources,
+                    "payload": payload,
+                    "user_prompt": user_prompt,
+                }
             )
+
+        semaphore = asyncio.Semaphore(self.max_concurrent_sections)
+
+        async def analyze_section(section_input: dict[str, Any]) -> Any:
+            async with semaphore:
+                return await self._complete_json(
+                    section_input["payload"],
+                    system_prompt=self.SEARCH_ANALYSIS_SYSTEM,
+                    user_prompt=section_input["user_prompt"],
+                    temperature=0.2,
+                    max_tokens=16000,
+                )
+
+        # DeepScout runs up to three section jobs at once. Keep the same bound
+        # here while parsing and merging results later in outline/source order.
+        section_results = await asyncio.gather(
+            *(analyze_section(section_input) for section_input in section_inputs)
+        )
+
+        for section_input, result in zip(section_inputs, section_results):
+            section_id = section_input["section_id"]
+            section_sources = section_input["section_sources"]
+            processed_sources = section_input["processed_sources"]
+            payload = section_input["payload"]
             optional_warnings: list[str] = []
             if not isinstance(result, dict):
                 result = {}

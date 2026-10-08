@@ -24,6 +24,17 @@ def review(verdict, *, more_research=False, issues=None, search_queries=None, sc
     }
 
 
+async def next_agent_progress(stream, message_type):
+    """Skip already queued progress and return the requested agent message."""
+    while True:
+        event = await anext(stream)
+        if (
+            event["type"] == ResearchEventType.AGENT_PROGRESS
+            and event.get("message_type") == message_type
+        ):
+            return event
+
+
 class SequencedReviewLLM(MockLLMClient):
     def __init__(self, reviews):
         self.reviews = iter(reviews)
@@ -194,21 +205,18 @@ class GraphRuntimeStreamTests(unittest.TestCase):
             for expected in ("research_started", "phase_started", "outline_ready", "phase_started"):
                 event = await anext(stream)
                 self.assertEqual(event["type"], expected)
-            # Researcher emits a running step and an action before awaiting the
-            # external search provider.
+            # The researcher emits a running step before launching parallel
+            # section searches. Each section emits its own action event.
             first_progress = await anext(stream)
-            second_progress = await anext(stream)
             self.assertEqual(first_progress["type"], ResearchEventType.AGENT_PROGRESS)
             self.assertEqual(first_progress["message_type"], "research_step")
-            self.assertEqual(second_progress["type"], ResearchEventType.AGENT_PROGRESS)
-            self.assertEqual(second_progress["message_type"], "action")
-            waiting_for_progress = asyncio.create_task(anext(stream))
+            waiting_for_progress = asyncio.create_task(
+                next_agent_progress(stream, "search_progress")
+            )
             await search.search_started.wait()
             self.assertFalse(waiting_for_progress.done())
             search.release_search.set()
             progress = await waiting_for_progress
-            self.assertEqual(progress["type"], ResearchEventType.AGENT_PROGRESS)
-            self.assertEqual(progress["message_type"], "search_progress")
             self.assertEqual(progress["phase"], "researching")
             _ = [event async for event in stream]
 
@@ -232,7 +240,9 @@ class GraphRuntimeStreamTests(unittest.TestCase):
                 ):
                     action = event
             workflow.request_cancel("cancel-search-001")
-            waiting_for_progress = asyncio.create_task(anext(stream))
+            waiting_for_progress = asyncio.create_task(
+                next_agent_progress(stream, "search_progress")
+            )
             await search.search_started.wait()
             self.assertFalse(waiting_for_progress.done())
             search.release_search.set()

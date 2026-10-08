@@ -10,6 +10,52 @@ from app.domain.state import ResearchState
 
 
 class ResearcherAgentTests(unittest.TestCase):
+    def test_researcher_runs_three_section_searches_concurrently_in_stable_order(self):
+        class ConcurrentSearch(SearchClient):
+            def __init__(self):
+                self.active = 0
+                self.max_active = 0
+
+            async def search(self, query, limit=3):
+                self.active += 1
+                self.max_active = max(self.max_active, self.active)
+                try:
+                    # Reverse completion order to verify deterministic merging.
+                    await asyncio.sleep((4 - int(query[-1])) * 0.01)
+                    return [
+                        SearchResult(
+                            title=query,
+                            url=f"https://example.com/{query}",
+                            snippet="摘要",
+                            query=query,
+                        )
+                    ]
+                finally:
+                    self.active -= 1
+
+        async def run():
+            search = ConcurrentSearch()
+            state = ResearchState("测试问题")
+            state.outline = [
+                {
+                    "id": f"sec-{index}",
+                    "title": f"章节 {index}",
+                    "status": "pending",
+                    "search_queries": [f"查询 {index}"],
+                }
+                for index in range(1, 5)
+            ]
+            await ResearcherAgent(search).run(state)
+            return state, search
+
+        state, search = asyncio.run(run())
+
+        self.assertEqual(search.max_active, 3)
+        self.assertEqual(
+            [source["section_id"] for source in state.raw_sources],
+            ["sec-1", "sec-2", "sec-3"],
+        )
+
     def test_researcher_limits_normal_run_to_three_pending_sections_and_ten_results(self):
         class CapturingSearch(SearchClient):
             def __init__(self):

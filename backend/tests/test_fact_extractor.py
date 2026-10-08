@@ -194,6 +194,71 @@ class RepairingFactClient(LLMClient):
 
 
 class FactExtractorAgentTests(unittest.TestCase):
+    def test_fact_extractor_analyzes_three_sections_concurrently_in_stable_order(self):
+        class ConcurrentClient(LLMClient):
+            def __init__(self):
+                self.active = 0
+                self.max_active = 0
+
+            async def complete_json(
+                self,
+                role,
+                payload,
+                system_prompt="",
+                user_prompt="",
+                temperature=None,
+                max_tokens=None,
+            ):
+                self.active += 1
+                self.max_active = max(self.max_active, self.active)
+                try:
+                    section_id = payload["section"]["id"]
+                    await asyncio.sleep((5 - int(section_id[-1])) * 0.01)
+                    source = payload["sources"][0]
+                    return {
+                        "extracted_facts": [
+                            {
+                                "content": f"来自 {section_id} 的事实",
+                                "source_name": source["source"],
+                                "source_url": source["url"],
+                                "credibility_score": 0.8,
+                            }
+                        ]
+                    }
+                finally:
+                    self.active -= 1
+
+            async def complete_text(self, role, payload):
+                return ""
+
+        async def run():
+            client = ConcurrentClient()
+            state = ResearchState("测试问题")
+            state.outline = [
+                {"id": f"sec-{index}", "title": f"章节 {index}"}
+                for index in range(1, 5)
+            ]
+            state.raw_sources = [
+                {
+                    "title": f"来源 {index}",
+                    "url": f"https://example.com/{index}",
+                    "source": "测试站点",
+                    "summary": "摘要",
+                    "section_id": f"sec-{index}",
+                }
+                for index in range(1, 5)
+            ]
+            await FactExtractorAgent(client).run(state)
+            return state, client
+
+        state, client = asyncio.run(run())
+
+        self.assertEqual(client.max_active, 3)
+        self.assertEqual(
+            [fact["section_id"] for fact in state.facts],
+            ["sec-1", "sec-2", "sec-3", "sec-4"],
+        )
+
     def test_fact_extractor_calls_once_per_section_with_reference_limits(self):
         class CapturingClient(LLMClient):
             def __init__(self):

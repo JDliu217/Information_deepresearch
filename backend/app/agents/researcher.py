@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable
 from datetime import datetime, timezone
 from typing import Any
@@ -152,8 +153,15 @@ class ResearcherAgent(BaseAgent):
                 if recursive
                 else self.supplementary_results_per_query
             )
-        total_result_count = len(collected_sources)
-        for task_index, task in enumerate(tasks, start=1):
+        total_result_count = [len(collected_sources)]
+        result_count_lock = asyncio.Lock()
+
+        async def execute_task(
+            task: dict[str, Any],
+            *,
+            task_index: int,
+            task_count: int,
+        ) -> list[dict[str, Any]]:
             self._emit_progress(
                 state,
                 "action",
@@ -169,16 +177,18 @@ class ResearcherAgent(BaseAgent):
                 query=task["query"],
                 limit=result_limit,
             )
-            total_result_count += len(results)
+            async with result_count_lock:
+                total_result_count[0] += len(results)
+                total_so_far = total_result_count[0]
             self._emit_progress(
                 state,
                 "search_progress",
                 {
                     "query": task["query"],
                     "results_count": len(results),
-                    "total_so_far": total_result_count,
+                    "total_so_far": total_so_far,
                     "section": task.get("section_title", ""),
-                    "progress": f"{task_index}/{len(tasks)}",
+                    "progress": f"{task_index}/{task_count}",
                     "search_type": task.get("search_type", "web"),
                     "supplementary": supplementary,
                 },
@@ -206,6 +216,7 @@ class ResearcherAgent(BaseAgent):
                     },
                     progress_callback,
                 )
+            task_sources: list[dict[str, Any]] = []
             for result in results:
                 source = result.to_dict()
                 source.setdefault("summary", source.get("snippet", ""))
@@ -221,7 +232,49 @@ class ResearcherAgent(BaseAgent):
                         source["section_title"] = task["section_titles"].get(
                             section_id, ""
                         )
-                collected_sources.append(source)
+                task_sources.append(source)
+            return task_sources
+
+        if supplementary:
+            # The reference supplementary pass handles at most five queries in
+            # order, analysing each result before moving on to the next query.
+            for task_index, task in enumerate(tasks, start=1):
+                collected_sources.extend(
+                    await execute_task(
+                        task,
+                        task_index=task_index,
+                        task_count=len(tasks),
+                    )
+                )
+        else:
+            # DeepScout gathers up to three section jobs concurrently. Keep
+            # each section's own search queries sequential, then merge batches
+            # in outline order so the saved state remains deterministic.
+            section_groups: dict[str, list[dict[str, Any]]] = {}
+            for index, task in enumerate(tasks):
+                section_id = task["section_ids"][0] if task["section_ids"] else ""
+                group_key = section_id or f"__unassigned_{index}"
+                section_groups.setdefault(group_key, []).append(task)
+
+            async def execute_section(
+                section_tasks: list[dict[str, Any]],
+            ) -> list[dict[str, Any]]:
+                section_sources: list[dict[str, Any]] = []
+                for task_index, task in enumerate(section_tasks, start=1):
+                    section_sources.extend(
+                        await execute_task(
+                            task,
+                            task_index=task_index,
+                            task_count=len(section_tasks),
+                        )
+                    )
+                return section_sources
+
+            section_batches = await asyncio.gather(
+                *(execute_section(group) for group in section_groups.values())
+            )
+            for section_batch in section_batches:
+                collected_sources.extend(section_batch)
 
         state.raw_sources = self._deduplicate_sources(collected_sources)
         state.references = [
