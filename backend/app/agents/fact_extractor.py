@@ -33,12 +33,15 @@ extracted_facts 的每个元素必须是对象，并包含：
 - source_name：对应来源名称；
 - credibility_score：0 到 1 的数字；
 - data_points：数据点数组，没有则为 []。数据点须有 name、value、unit、year（年份未知用 null）。
-可选 related_hypothesis 和 hypothesis_support 必须对应输入中的假设和证据方向。
+可选 related_hypothesis 必须是输入 hypotheses 中的 id，hypothesis_support 只能是
+supports、refutes 或 neutral；不能确定时两个字段都不要填写。
+hypothesis_evidence 的每项须包含已知 hypothesis_id、evidence_summary，以及
+supports、refutes 或 inconclusive 三种 evidence_type 之一；不能确定时不要输出该项。
 不要另外输出 facts 字段。没有明确证据时 extracted_facts 返回 []；不要为了填数组而编造内容。
 来源冲突时分别保留并说明冲突。"""
     SCHEMA_REPAIR_PROMPT = """上次事实提取结果未通过结构校验。请针对下面的校验错误重新分析同一批来源，
 重新输出完整 JSON 对象。每条 extracted_facts 必须同时包含非空 content 和本次 sources 中原样存在的
-source_url。无法确认来源的事实应从结果中删除，不得猜测或补造 URL。"""
+source_url。无法确认来源的事实应从结果中删除，不得猜测或补造 URL；假设方向不确定时省略关联字段。"""
     DEEP_READ_PROMPT = """请对指定来源进行深度阅读，只抽取与当前章节直接相关的原文证据、数据点、
 假设支持方向和仍需核验的内容。保持 source_url 不变，不把宣传语或推测写成事实。"""
     SUPPLEMENTARY_SEARCH_PROMPT = """请根据当前缺口生成少量可执行的补充搜索查询和来源追溯查询。查询应
@@ -114,11 +117,13 @@ source_url。无法确认来源的事实应从结果中删除，不得猜测或�
                     user_prompt=self._render_prompt(prompt, payload),
                 )
                 try:
+                    hypothesis_warnings: list[str] = []
                     raw_facts = self._normalize_extracted_facts(result)
                     facts = self._validate_facts(
                         raw_facts,
                         section_sources[: self.max_sources_per_section],
                         state.hypotheses,
+                        hypothesis_warnings,
                     )
                     break
                 except ValueError as exc:
@@ -146,7 +151,7 @@ source_url。无法确认来源的事实应从结果中删除，不得猜测或�
                     if section_context not in contexts:
                         contexts.append(section_context)
             hypothesis_evidence.extend(self._validate_hypothesis_evidence(
-                result.get("hypothesis_evidence", []), state.hypotheses
+                result.get("hypothesis_evidence", []), state.hypotheses, hypothesis_warnings
             ))
             analysis_notes.append({
                 "agent": self.name,
@@ -154,6 +159,13 @@ source_url。无法确认来源的事实应从结果中删除，不得猜测或�
                 "source_quality_assessment": str(result.get("source_quality_assessment", "")),
                 "missing_info": self._string_list(result.get("missing_info", [])),
             })
+            if hypothesis_warnings:
+                analysis_notes.append({
+                    "agent": self.name,
+                    "section_id": section_id,
+                    "warning": "ignored_invalid_hypothesis_evidence",
+                    "details": hypothesis_warnings[:10],
+                })
 
         all_facts = self._deduplicate_facts(all_facts)
         state.facts = self._deduplicate_facts(state.facts + all_facts)
@@ -248,29 +260,55 @@ source_url。无法确认来源的事实应从结果中删除，不得猜测或�
     def _validate_hypothesis_evidence(
         value: Any,
         hypotheses: list[dict[str, Any]],
+        warnings: list[str] | None = None,
     ) -> list[dict[str, str]]:
         if value is None:
             return []
         if not isinstance(value, list):
-            raise ValueError("FactExtractor hypothesis_evidence 必须是列表")
+            if warnings is not None:
+                warnings.append("hypothesis_evidence 不是列表")
+            return []
         valid_ids = {str(item.get("id", "")).strip() for item in hypotheses}
         evidence: list[dict[str, str]] = []
-        for item in value:
+        for index, item in enumerate(value, start=1):
             if not isinstance(item, dict):
-                raise ValueError("FactExtractor hypothesis_evidence 元素必须是对象")
+                if warnings is not None:
+                    warnings.append(f"hypothesis_evidence 第 {index} 项不是对象")
+                continue
             hypothesis_id = str(item.get("hypothesis_id", "")).strip()
-            evidence_type = str(item.get("evidence_type", "")).strip()
-            summary = str(item.get("evidence_summary", "")).strip()
-            if hypothesis_id not in valid_ids:
-                raise ValueError("FactExtractor hypothesis_evidence 引用了未知假设")
-            if evidence_type not in {"supports", "refutes", "inconclusive"} or not summary:
-                raise ValueError("FactExtractor hypothesis_evidence 类型或摘要无效")
+            evidence_type = FactExtractorAgent._normalize_hypothesis_support(
+                item.get("evidence_type")
+            )
+            summary = str(item.get("evidence_summary") or "").strip()
+            if hypothesis_id not in valid_ids or not evidence_type or not summary:
+                if warnings is not None:
+                    warnings.append(f"hypothesis_evidence 第 {index} 项关联或摘要无效")
+                continue
             evidence.append({
                 "hypothesis_id": hypothesis_id,
-                "evidence_type": evidence_type,
+                "evidence_type": "inconclusive" if evidence_type == "neutral" else evidence_type,
                 "evidence_summary": summary[:200],
             })
         return evidence
+
+    @staticmethod
+    def _normalize_hypothesis_support(value: Any) -> str:
+        """Only map unambiguous directions; uncertain votes are discarded."""
+
+        if not isinstance(value, str):
+            return ""
+        return {
+            "supports": "supports",
+            "support": "supports",
+            "支持": "supports",
+            "refutes": "refutes",
+            "refute": "refutes",
+            "反驳": "refutes",
+            "neutral": "neutral",
+            "inconclusive": "neutral",
+            "中立": "neutral",
+            "无法判断": "neutral",
+        }.get(value.strip().lower(), "")
 
     @staticmethod
     def _apply_structured_hypothesis_evidence(
@@ -428,6 +466,7 @@ source_url。无法确认来源的事实应从结果中删除，不得猜测或�
         value: Any,
         sources: list[dict[str, Any]],
         hypotheses: list[dict[str, Any]],
+        warnings: list[str] | None = None,
     ) -> list[dict[str, Any]]:
         if not isinstance(value, list):
             raise ValueError("FactExtractor 返回的 facts 必须是列表")
@@ -539,22 +578,15 @@ source_url。无法确认来源的事实应从结果中删除，不得猜测或�
             fact["data_points"] = normalized_data_points
 
             related_hypothesis = str(item.get("related_hypothesis") or "").strip()
-            hypothesis_support = str(item.get("hypothesis_support") or "").strip()
-            if related_hypothesis or hypothesis_support:
-                if not related_hypothesis or not hypothesis_support:
-                    raise ValueError(
-                        f"FactExtractor 的第 {index} 个事实假设关联字段必须同时提供"
-                    )
-                if related_hypothesis not in hypothesis_ids:
-                    raise ValueError(
-                        f"FactExtractor 的第 {index} 个事实引用了未知假设"
-                    )
-                if hypothesis_support not in {"supports", "refutes", "neutral"}:
-                    raise ValueError(
-                        f"FactExtractor 的第 {index} 个事实 hypothesis_support 无效"
-                    )
+            hypothesis_support = FactExtractorAgent._normalize_hypothesis_support(
+                item.get("hypothesis_support")
+            )
+            if related_hypothesis in hypothesis_ids and hypothesis_support:
                 fact["related_hypothesis"] = related_hypothesis
                 fact["hypothesis_support"] = hypothesis_support
+            elif related_hypothesis or item.get("hypothesis_support"):
+                if warnings is not None:
+                    warnings.append(f"第 {index} 个事实的假设关联无效")
 
             source_context = source_by_url[source_url]
             for field_name in ("section_id", "section_title"):
@@ -634,8 +666,6 @@ source_url。无法确认来源的事实应从结果中删除，不得猜测或�
                     evidence.append(summary)
                 if len(evidence) >= 2:
                     hypothesis["status"] = "refuted"
-            elif hypothesis.get("status") == "unverified":
-                hypothesis["status"] = "partially_supported"
 
     @staticmethod
     def _deduplicate_facts(facts: list[dict[str, Any]]) -> list[dict[str, Any]]:

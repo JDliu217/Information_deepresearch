@@ -491,7 +491,7 @@ class FactExtractorAgentTests(unittest.TestCase):
         self.assertEqual(state.hypotheses[0]["status"], "refuted")
         self.assertEqual(len(state.hypotheses[0]["evidence_against"]), 2)
 
-    def test_fact_extractor_rejects_unknown_hypothesis(self):
+    def test_fact_extractor_keeps_fact_when_hypothesis_is_unknown(self):
         state = ResearchState("测试问题")
         state.raw_sources = [
             {"title": "来源", "url": "https://example.com/1", "snippet": "证据"}
@@ -506,12 +506,83 @@ class FactExtractorAgentTests(unittest.TestCase):
             }
         ]
 
-        with self.assertRaisesRegex(ValueError, "未知假设"):
-            asyncio.run(
-                FactExtractorAgent(
-                    HypothesisFactClient("supports", hypothesis_id="missing")
-                ).run(state)
-            )
+        asyncio.run(
+            FactExtractorAgent(
+                HypothesisFactClient("supports", hypothesis_id="missing")
+            ).run(state)
+        )
+
+        self.assertEqual(len(state.facts), 1)
+        self.assertNotIn("related_hypothesis", state.facts[0])
+        self.assertTrue(
+            any(log.get("warning") == "ignored_invalid_hypothesis_evidence" for log in state.logs)
+        )
+
+    def test_fact_extractor_keeps_fact_when_hypothesis_support_is_invalid(self):
+        state = ResearchState("测试问题")
+        state.raw_sources = [
+            {"title": "来源", "url": "https://example.com/1", "snippet": "证据"}
+        ]
+        state.hypotheses = [
+            {
+                "id": "h-1",
+                "content": "待验证假设",
+                "status": "unverified",
+                "evidence_for": [],
+                "evidence_against": [],
+            }
+        ]
+
+        asyncio.run(FactExtractorAgent(HypothesisFactClient("unsupported")).run(state))
+
+        self.assertEqual(len(state.facts), 1)
+        self.assertNotIn("hypothesis_support", state.facts[0])
+        self.assertTrue(
+            any(log.get("warning") == "ignored_invalid_hypothesis_evidence" for log in state.logs)
+        )
+
+    def test_fact_extractor_keeps_only_valid_structured_hypothesis_evidence(self):
+        warnings = []
+
+        evidence = FactExtractorAgent._validate_hypothesis_evidence(
+            [
+                {
+                    "hypothesis_id": "h-1",
+                    "evidence_type": "支持",
+                    "evidence_summary": "有来源支持",
+                },
+                {
+                    "hypothesis_id": "h-1",
+                    "evidence_type": "unclear",
+                    "evidence_summary": "方向不明",
+                },
+            ],
+            [{"id": "h-1"}],
+            warnings,
+        )
+
+        self.assertEqual(len(evidence), 1)
+        self.assertEqual(evidence[0]["evidence_type"], "supports")
+        self.assertEqual(len(warnings), 1)
+
+    def test_neutral_fact_does_not_change_hypothesis_status(self):
+        state = ResearchState("测试问题")
+        state.raw_sources = [
+            {"title": "来源", "url": "https://example.com/1", "snippet": "证据"}
+        ]
+        state.hypotheses = [
+            {
+                "id": "h-1",
+                "content": "待验证假设",
+                "status": "unverified",
+                "evidence_for": [],
+                "evidence_against": [],
+            }
+        ]
+
+        asyncio.run(FactExtractorAgent(HypothesisFactClient("neutral")).run(state))
+
+        self.assertEqual(state.hypotheses[0]["status"], "unverified")
 
     def test_fact_extractor_rejects_invalid_data_point(self):
         state = ResearchState("测试问题")
