@@ -153,6 +153,74 @@ class ResearcherAgentTests(unittest.TestCase):
         self.assertTrue(
             all(source["analysis_mode"] == "recursive" for source in state.raw_sources)
         )
+
+    def test_researcher_applies_recursive_query_limit_per_section_and_type(self):
+        class CapturingSearch(SearchClient):
+            def __init__(self):
+                self.calls = []
+
+            async def search(self, query, limit=3):
+                self.calls.append((query, limit))
+                return [SearchResult("来源", f"https://example.com/{query}", "摘要", query)]
+
+        state = ResearchState("测试问题")
+        state.pending_search_queries = [
+            f"{section} {search_type} {index}"
+            for section in ("章节一", "章节二")
+            for search_type in ("追溯", "线索")
+            for index in range(3)
+        ]
+        state.pending_search_contexts = {
+            query: [
+                {
+                    "section_id": "sec-1" if query.startswith("章节一") else "sec-2",
+                    "section_title": "章节一" if query.startswith("章节一") else "章节二",
+                    "search_type": "source_tracing" if "追溯" in query else "follow_up",
+                }
+            ]
+            for query in state.pending_search_queries
+        }
+        search = CapturingSearch()
+
+        asyncio.run(ResearcherAgent(search).run(state, supplementary=True, recursive=True))
+
+        self.assertEqual(len(search.calls), 8)
+        self.assertEqual(
+            {source["section_id"] for source in state.raw_sources},
+            {"sec-1", "sec-2"},
+        )
+        counts = {}
+        for source in state.raw_sources:
+            key = (source["section_id"], source["search_type"])
+            counts[key] = counts.get(key, 0) + 1
+        self.assertEqual(set(counts.values()), {2})
+
+    def test_researcher_keeps_same_recursive_query_for_distinct_search_types(self):
+        class CapturingSearch(SearchClient):
+            def __init__(self):
+                self.calls = []
+
+            async def search(self, query, limit=3):
+                self.calls.append((query, limit))
+                return [SearchResult("来源", f"https://example.com/{len(self.calls)}", "摘要", query)]
+
+        state = ResearchState("测试问题")
+        state.pending_search_queries = ["同一个查询"]
+        state.pending_search_contexts = {
+            "同一个查询": [
+                {"section_id": "sec-1", "section_title": "章节", "search_type": "source_tracing"},
+                {"section_id": "sec-1", "section_title": "章节", "search_type": "follow_up"},
+            ]
+        }
+        search = CapturingSearch()
+
+        asyncio.run(ResearcherAgent(search).run(state, supplementary=True, recursive=True))
+
+        self.assertEqual([query for query, _ in search.calls], ["同一个查询", "同一个查询"])
+        self.assertEqual(
+            {source["search_type"] for source in state.raw_sources},
+            {"source_tracing", "follow_up"},
+        )
     def test_researcher_collects_sources_after_planning(self):
         async def run_chain():
             state = ResearchState("中国新能源汽车行业的发展趋势是什么？")

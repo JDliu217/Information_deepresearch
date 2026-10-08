@@ -65,48 +65,90 @@ class ResearcherAgent(BaseAgent):
             supplementary = bool(state.pending_search_queries)
         if supplementary:
             tasks = []
-            recursive_counts = {"source_tracing": 0, "follow_up": 0}
+            recursive_counts: dict[tuple[str, str], int] = {}
             for query in state.pending_search_queries:
-                if len(tasks) >= self.max_supplementary_queries:
-                    break
                 contexts = state.pending_search_contexts.get(query, [])
-                search_type = next(
-                    (
-                        str(context.get("search_type", "")).strip()
-                        for context in contexts
-                        if str(context.get("search_type", "")).strip()
-                    ),
-                    "follow_up",
-                )
                 if recursive:
-                    if search_type not in recursive_counts:
-                        search_type = "follow_up"
-                    if recursive_counts[search_type] >= self.max_recursive_queries_per_type:
-                        continue
-                    recursive_counts[search_type] += 1
-                section_ids = list(
-                    dict.fromkeys(
-                        str(context.get("section_id", "")).strip()
+                    contexts_by_type: dict[str, list[dict[str, Any]]] = {}
+                    for context in contexts:
+                        search_type = str(context.get("search_type", "")).strip()
+                        if search_type not in {"source_tracing", "follow_up"}:
+                            search_type = "follow_up"
+                        contexts_by_type.setdefault(search_type, []).append(context)
+                    if not contexts_by_type:
+                        contexts_by_type["follow_up"] = []
+
+                    for search_type, typed_contexts in contexts_by_type.items():
+                        section_titles = {
+                            str(context.get("section_id", "")).strip(): str(
+                                context.get("section_title", "")
+                            ).strip()
+                            for context in typed_contexts
+                            if str(context.get("section_id", "")).strip()
+                        }
+                        scopes = list(section_titles) or ["__unassigned__"]
+                        available_scopes = [
+                            section_id
+                            for section_id in scopes
+                            if recursive_counts.get((section_id, search_type), 0)
+                            < self.max_recursive_queries_per_type
+                        ]
+                        if not available_scopes:
+                            continue
+                        for section_id in available_scopes:
+                            key = (section_id, search_type)
+                            recursive_counts[key] = recursive_counts.get(key, 0) + 1
+                        tasks.append(
+                            {
+                                "query": query.strip(),
+                                "section_ids": [
+                                    section_id
+                                    for section_id in available_scopes
+                                    if section_id != "__unassigned__"
+                                ],
+                                "section_titles": {
+                                    section_id: section_titles[section_id]
+                                    for section_id in available_scopes
+                                    if section_id in section_titles
+                                },
+                                "supplementary": True,
+                                "search_type": search_type,
+                            }
+                        )
+                else:
+                    if len(tasks) >= self.max_supplementary_queries:
+                        break
+                    search_type = next(
+                        (
+                            str(context.get("search_type", "")).strip()
+                            for context in contexts
+                            if str(context.get("search_type", "")).strip()
+                        ),
+                        "follow_up",
+                    )
+                    section_ids = list(
+                        dict.fromkeys(
+                            str(context.get("section_id", "")).strip()
+                            for context in contexts
+                            if str(context.get("section_id", "")).strip()
+                        )
+                    )
+                    section_titles = {
+                        str(context.get("section_id", "")).strip(): str(
+                            context.get("section_title", "")
+                        ).strip()
                         for context in contexts
                         if str(context.get("section_id", "")).strip()
-                    )
-                )
-                section_titles = {
-                    str(context.get("section_id", "")).strip(): str(
-                        context.get("section_title", "")
-                    ).strip()
-                    for context in contexts
-                    if str(context.get("section_id", "")).strip()
-                }
-                tasks.append(
-                    {
-                        "query": query.strip(),
-                        "section_ids": section_ids,
-                        "section_titles": section_titles,
-                        "supplementary": True,
-                        "search_type": search_type,
                     }
-                )
+                    tasks.append(
+                        {
+                            "query": query.strip(),
+                            "section_ids": section_ids,
+                            "section_titles": section_titles,
+                            "supplementary": True,
+                            "search_type": search_type,
+                        }
+                    )
         else:
             tasks = [
                 {
