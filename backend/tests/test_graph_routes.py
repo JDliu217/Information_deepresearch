@@ -17,13 +17,22 @@ from app.graph.routes import prepare_review_route, select_review_route
 from app.graph.state import initial_graph_state
 
 
-def review(verdict, *, more_research=False, issues=None, search_queries=None, score=5.0):
+def review(
+    verdict,
+    *,
+    more_research=False,
+    issues=None,
+    structured_issues=None,
+    search_queries=None,
+    score=5.0,
+):
     return {
         "verdict": verdict,
         "quality_score": score,
         "summary": "测试审核结果",
         "needs_more_research": more_research,
         "issues": issues or [],
+        "structured_issues": structured_issues or [],
         "search_queries": search_queries or [],
     }
 
@@ -31,9 +40,11 @@ def review(verdict, *, more_research=False, issues=None, search_queries=None, sc
 class SequencedReviewLLM(MockLLMClient):
     def __init__(self, reviews):
         self.reviews = iter(reviews)
+        self.critic_calls = 0
 
     async def complete_json(self, role, payload):
         if role == "critic":
+            self.critic_calls += 1
             return next(self.reviews)
         return await super().complete_json(role, payload)
 
@@ -65,8 +76,17 @@ class GraphRouteTests(unittest.TestCase):
         state.review_result = review(
             "needs_revision",
             more_research=True,
-            search_queries=["最新数据"],
+            structured_issues=[
+                {
+                    "target_section": "sec-1",
+                    "issue_type": "outdated",
+                    "severity": "major",
+                    "requires_new_search": True,
+                    "search_query": "最新数据",
+                }
+            ],
         )
+        state.outline = [{"id": "sec-1", "title": "章节一", "status": "drafted"}]
 
         result = prepare_review_route(initial_graph_state(state))
 
@@ -87,6 +107,49 @@ class GraphRouteTests(unittest.TestCase):
         self.assertEqual(result["route"], "stop")
         self.assertEqual(state.iteration, 1)
 
+    def test_minor_issue_does_not_bypass_critic_research_threshold(self):
+        state = ResearchState("测试问题", max_iterations=1)
+        state.review_result = review(
+            "needs_revision",
+            more_research=True,
+            search_queries=["模型建议的查询"],
+            structured_issues=[
+                {
+                    "issue_type": "logic_error",
+                    "severity": "minor",
+                    "requires_new_search": False,
+                }
+            ],
+        )
+
+        result = prepare_review_route(initial_graph_state(state))
+
+        self.assertEqual(result["route"], "revise")
+        self.assertFalse(result["supplementary"])
+        self.assertEqual(result["research_state"].pending_search_queries, [])
+
+    def test_pass_stops_even_with_low_score_or_unresolved_issues(self):
+        state = ResearchState("测试问题", max_iterations=2)
+        state.review_result = review(
+            "pass",
+            more_research=True,
+            search_queries=["不要执行的查询"],
+            score=4.0,
+            structured_issues=[
+                {
+                    "issue_type": "missing_source",
+                    "severity": "critical",
+                    "requires_new_search": True,
+                    "search_query": "不要执行的查询",
+                }
+            ],
+        )
+
+        result = prepare_review_route(initial_graph_state(state))
+
+        self.assertEqual(result["route"], "stop")
+        self.assertEqual(result["research_state"].iteration, 0)
+
     def test_follow_up_queries_are_researched_before_analysis(self):
         state = ResearchState("测试问题", max_iterations=2)
         state.outline = [{"id": "sec-1", "status": "researching"}]
@@ -106,16 +169,19 @@ class GraphRouteTests(unittest.TestCase):
         state.iteration = 0
         state.outline = [{"id": "sec-1", "title": "章节一", "status": "researching"}]
         state.review_result = {
-            **review("needs_revision", more_research=True, search_queries=["更新数据"]),
-            "structured_issues": [
-                {
-                    "target_section": "sec-1",
-                    "search_query": "更新数据",
-                    "requires_new_search": True,
-                    "issue_type": "outdated",
-                    "severity": "major",
-                }
-            ],
+            **review(
+                "needs_revision",
+                more_research=True,
+                structured_issues=[
+                    {
+                        "target_section": "sec-1",
+                        "search_query": "更新数据",
+                        "requires_new_search": True,
+                        "issue_type": "outdated",
+                        "severity": "major",
+                    }
+                ],
+            ),
         }
 
         result = prepare_review_route({
@@ -135,7 +201,16 @@ class GraphRouteTests(unittest.TestCase):
                 review(
                     "needs_revision",
                     more_research=True,
-                    search_queries=["最新数据"],
+                    issues=[
+                        {
+                            "issue_type": "outdated",
+                            "severity": "major",
+                            "requires_new_search": True,
+                            "search_query": "最新数据",
+                            "description": "需要更新数据",
+                            "suggestion": "补充最新数据来源",
+                        }
+                    ],
                 ),
                 review("pass", score=8.0),
             ]
@@ -150,13 +225,43 @@ class GraphRouteTests(unittest.TestCase):
         self.assertEqual(result["research_state"].phase, "completed")
         self.assertEqual(result["research_state"].iteration, 1)
         self.assertEqual(result["research_state"].review_result["verdict"], "pass")
-        self.assertEqual(search.queries[-1], "最新数据")
         evidence_events = [
             event for event in result["events"] if event["type"] == "research_evidence_ready"
         ]
         self.assertEqual(len(evidence_events), 2)
         self.assertTrue(evidence_events[-1]["supplementary"])
         self.assertEqual(evidence_events[-1]["iteration"], 1)
+
+    def test_max_iterations_counts_rework_rounds_like_reference_graph(self):
+        for max_iterations in (0, 1, 2):
+            with self.subTest(max_iterations=max_iterations):
+                non_pass_review = review(
+                    "needs_revision",
+                    structured_issues=[
+                        {
+                            "issue_type": "logic_error",
+                            "severity": "minor",
+                            "requires_new_search": False,
+                        }
+                    ],
+                )
+                llm = SequencedReviewLLM(
+                    [non_pass_review for _ in range(max_iterations + 1)]
+                )
+                graph = build_research_graph(
+                    make_nodes(llm, GraphRecordingSearchClient())
+                )
+
+                result = asyncio.run(
+                    graph.ainvoke(
+                        initial_graph_state(
+                            ResearchState("测试问题", max_iterations=max_iterations)
+                        )
+                    )
+                )
+
+                self.assertEqual(llm.critic_calls, max_iterations + 1)
+                self.assertEqual(result["research_state"].iteration, max_iterations)
 
 
 if __name__ == "__main__":

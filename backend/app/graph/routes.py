@@ -51,16 +51,12 @@ def prepare_review_route(graph_state: ResearchGraphState) -> dict[str, Any]:
 
     state.iteration += 1
     review_route = CriticAgent.route_review(review)
-    needs_research = bool(
-        review_route["should_research"] or review.get("needs_more_research")
-    )
+    # CriticAgent.route_review mirrors the reference CriticMaster's issue-type
+    # and severity-ratio rule. The model's `needs_more_research` flag is kept
+    # as review metadata, but must not bypass that routing decision.
+    needs_research = review_route["should_research"]
     if needs_research:
-        state.pending_search_queries = (
-            review_route["search_queries"]
-            or review.get("search_queries", [])
-            or review.get("issues", [])
-            or state.research_questions
-        )
+        state.pending_search_queries = review_route["search_queries"]
         state.pending_search_contexts = _review_search_contexts(
             state.pending_search_queries,
             review.get("structured_issues", []),

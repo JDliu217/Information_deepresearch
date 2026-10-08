@@ -17,7 +17,6 @@ class CriticAgent(BaseAgent):
     """检查报告是否有事实、来源和基本的可发布条件。"""
 
     name = "critic"
-    minimum_pass_score = 7.0
     REVIEW_SYSTEM = "你是一位极其严苛的质量审核专家，专门找出研究报告中的问题。你永远不会轻易满意。"
     REVIEW_PROMPT = r"""你是一位极其严苛的学术审稿人和事实核查专家。你的任务是找出研究报告中的所有问题。
 
@@ -339,19 +338,6 @@ class CriticAgent(BaseAgent):
         issues = CriticAgent._validate_issues(
             value.get("issues", value.get("problems", []))
         )
-
-        # Preserve the domain rule from the prompt while recovering cleanly
-        # from contradictory model output: a low score or unresolved serious
-        # issue turns "pass" into a revision route, just as the reference
-        # Critic routes every non-pass verdict back to revision/search.
-        if verdict == "pass" and (
-            quality_score < CriticAgent.minimum_pass_score
-            or any(
-            issue.get("severity") in {"critical", "major"} and not issue.get("resolved")
-            for issue in issues
-            )
-        ):
-            verdict = "needs_revision"
 
         fact_checks = CriticAgent._as_list(value.get("fact_check_results", []))
         normalized_fact_checks = []

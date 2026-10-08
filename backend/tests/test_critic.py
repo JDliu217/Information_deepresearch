@@ -153,7 +153,7 @@ class CriticAgentTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "审核的报告"):
             asyncio.run(CriticAgent(MockLLMClient()).run(ResearchState("测试问题")))
 
-    def test_critic_downgrades_pass_with_low_quality_score(self):
+    def test_critic_preserves_pass_with_low_quality_score(self):
         state = ResearchState("测试问题")
         state.final_report = "## 报告\n内容 https://example.com"
         state.facts = [{"content": "事实", "source_url": "https://example.com"}]
@@ -161,12 +161,11 @@ class CriticAgentTests(unittest.TestCase):
 
         reviewed = asyncio.run(CriticAgent(LowScorePassClient()).run(state))
 
-        # The score/verdict rule is still enforced, but a recoverable model
-        # contradiction routes to revision instead of aborting the research.
-        self.assertEqual(reviewed.review_result["verdict"], "needs_revision")
+        # The reference Critic trusts the normalized model verdict.
+        self.assertEqual(reviewed.review_result["verdict"], "pass")
         self.assertEqual(reviewed.review_result["quality_score"], 5.0)
 
-    def test_critic_downgrades_pass_with_unresolved_major_issue(self):
+    def test_critic_preserves_pass_with_unresolved_major_issue(self):
         class MajorIssueClient(MockLLMClient):
             async def complete_json(self, role, payload, system_prompt="", user_prompt=""):
                 result = await super().complete_json(role, payload, system_prompt, user_prompt)
@@ -189,7 +188,7 @@ class CriticAgentTests(unittest.TestCase):
 
         reviewed = asyncio.run(CriticAgent(MajorIssueClient()).run(state))
 
-        self.assertEqual(reviewed.review_result["verdict"], "needs_revision")
+        self.assertEqual(reviewed.review_result["verdict"], "pass")
         self.assertEqual(reviewed.unresolved_issues, 1)
         self.assertEqual(reviewed.review_result["structured_issues"][0]["issue_type"], "missing_source")
 
