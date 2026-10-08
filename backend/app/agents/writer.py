@@ -371,7 +371,7 @@ class WriterAgent(BaseAgent):
         state.phase = "reviewing"
         self._emit_progress(
             state,
-            "report_content",
+            "report_draft",
             {
                 "content": state.final_report,
                 "word_count": len(state.final_report),
@@ -458,7 +458,7 @@ class WriterAgent(BaseAgent):
         state.phase = "reviewing"
         self._emit_progress(
             state,
-            "report_content",
+            "report_draft",
             {
                 "content": state.final_report,
                 "word_count": len(state.final_report),

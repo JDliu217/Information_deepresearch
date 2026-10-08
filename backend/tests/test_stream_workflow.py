@@ -165,6 +165,13 @@ class GraphRuntimeStreamTests(unittest.TestCase):
         ]
         self.assertEqual(len(section_events), 3)
         self.assertTrue(all(event["phase"] == "writing" for event in section_events))
+        self.assertTrue(
+            any(
+                event["message_type"] == "report_draft"
+                for event in events
+                if event["type"] == ResearchEventType.AGENT_PROGRESS
+            )
+        )
         self.assertEqual(
             set(milestones[8]["draft_sections"]),
             {"sec_1", "sec_2", "sec_3"},
