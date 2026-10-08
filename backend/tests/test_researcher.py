@@ -70,7 +70,34 @@ class ResearcherAgentTests(unittest.TestCase):
 
         search = asyncio.run(run())
         self.assertEqual(len(search.calls), 5)
-        self.assertTrue(all(limit == 10 for _, limit in search.calls))
+        self.assertTrue(all(limit == 8 for _, limit in search.calls))
+
+    def test_researcher_limits_recursive_queries_by_reference_type(self):
+        class CapturingSearch(SearchClient):
+            def __init__(self):
+                self.calls = []
+
+            async def search(self, query, limit=3):
+                self.calls.append((query, limit))
+                return [SearchResult("来源", f"https://example.com/{query}", "摘要", query)]
+
+        state = ResearchState("测试问题")
+        state.pending_search_queries = [f"追溯 {i}" for i in range(3)] + [
+            f"线索 {i}" for i in range(3)
+        ]
+        state.pending_search_contexts = {
+            query: [{"search_type": "source_tracing" if query.startswith("追溯") else "follow_up"}]
+            for query in state.pending_search_queries
+        }
+        search = CapturingSearch()
+
+        asyncio.run(ResearcherAgent(search).run(state, supplementary=True, recursive=True))
+
+        self.assertEqual(
+            [query for query, _ in search.calls],
+            ["追溯 0", "追溯 1", "线索 0", "线索 1"],
+        )
+        self.assertTrue(all(limit == 6 for _, limit in search.calls))
     def test_researcher_collects_sources_after_planning(self):
         async def run_chain():
             state = ResearchState("中国新能源汽车行业的发展趋势是什么？")

@@ -23,6 +23,9 @@ class ResearcherAgent(BaseAgent):
 
     max_sections_per_run = 3
     max_supplementary_queries = 5
+    supplementary_results_per_query = 8
+    recursive_results_per_query = 6
+    max_recursive_queries_per_type = 2
 
     def __init__(
         self,
@@ -48,14 +51,32 @@ class ResearcherAgent(BaseAgent):
         state: ResearchState,
         *,
         supplementary: bool | None = None,
+        recursive: bool = False,
     ) -> ResearchState:
         """搜索章节查询，并把来源与章节关联后写入共享状态。"""
         if supplementary is None:
             supplementary = bool(state.pending_search_queries)
         if supplementary:
             tasks = []
-            for query in state.pending_search_queries[: self.max_supplementary_queries]:
+            recursive_counts = {"source_tracing": 0, "follow_up": 0}
+            for query in state.pending_search_queries:
+                if len(tasks) >= self.max_supplementary_queries:
+                    break
                 contexts = state.pending_search_contexts.get(query, [])
+                search_type = next(
+                    (
+                        str(context.get("search_type", "")).strip()
+                        for context in contexts
+                        if str(context.get("search_type", "")).strip()
+                    ),
+                    "follow_up",
+                )
+                if recursive:
+                    if search_type not in recursive_counts:
+                        search_type = "follow_up"
+                    if recursive_counts[search_type] >= self.max_recursive_queries_per_type:
+                        continue
+                    recursive_counts[search_type] += 1
                 section_ids = list(
                     dict.fromkeys(
                         str(context.get("section_id", "")).strip()
@@ -76,6 +97,7 @@ class ResearcherAgent(BaseAgent):
                         "section_ids": section_ids,
                         "section_titles": section_titles,
                         "supplementary": True,
+                        "search_type": search_type,
                     }
                 )
         else:
@@ -99,16 +121,25 @@ class ResearcherAgent(BaseAgent):
             raise ValueError("没有可执行的研究子问题")
 
         collected_sources = list(state.raw_sources)
+        result_limit = self.results_per_question
+        if supplementary:
+            result_limit = (
+                self.recursive_results_per_query
+                if recursive
+                else self.supplementary_results_per_query
+            )
         for task in tasks:
             results = await self.search.search(
                 query=task["query"],
-                limit=self.results_per_question,
+                limit=result_limit,
             )
             for result in results:
                 source = result.to_dict()
                 source.setdefault("summary", source.get("snippet", ""))
                 source.setdefault("source", "")
                 source.setdefault("date", "")
+                if task.get("search_type"):
+                    source["search_type"] = task["search_type"]
                 if task["section_ids"]:
                     source["section_ids"] = task["section_ids"]
                     if len(task["section_ids"]) == 1:

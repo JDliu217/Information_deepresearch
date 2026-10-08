@@ -97,6 +97,7 @@ class ResearchGraphNodes:
         await self.researcher.run(
             state,
             supplementary=bool(graph_state.get("supplementary", False)),
+            recursive=int(graph_state.get("research_depth", 0)) > 0,
         )
         return {"research_state": state}
 
