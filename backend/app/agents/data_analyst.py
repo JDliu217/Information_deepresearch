@@ -411,11 +411,26 @@ class DataAnalystAgent(BaseAgent):
             if not 0 <= confidence <= 1:
                 raise ValueError("DataAnalyst 数据点 confidence 必须在 0 到 1 之间")
             year = item.get("year")
+            year_label = ""
             if year is not None:
-                try:
+                if isinstance(year, bool):
+                    year_label = str(year)
+                    year = None
+                elif isinstance(year, int):
+                    pass
+                elif isinstance(year, float) and year.is_integer():
                     year = int(year)
-                except (TypeError, ValueError) as exc:
-                    raise ValueError("DataAnalyst 数据点 year 无效") from exc
+                else:
+                    raw_year = str(year).strip()
+                    try:
+                        year = int(raw_year)
+                    except (TypeError, ValueError):
+                        # The reference agent accepts descriptive periods such
+                        # as "2016-2023".  DataPoint.year models a single year,
+                        # so retain the original label separately instead of
+                        # rejecting the complete analysis result.
+                        year_label = raw_year
+                        year = None
             normalized = DataPoint(
                 id=str(item.get("id", "")).strip() or f"dp_{uuid.uuid4().hex[:8]}",
                 name=name,
@@ -425,6 +440,8 @@ class DataAnalystAgent(BaseAgent):
                 source=str(item.get("source", "")).strip(),
                 confidence=confidence,
             ).to_dict()
+            if year_label:
+                normalized["year_label"] = year_label
             # Keep reference fields such as category and any future metadata
             # that the current DataPoint schema does not model yet.
             target.append({**item, **normalized})

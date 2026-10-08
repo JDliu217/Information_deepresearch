@@ -261,6 +261,30 @@ class DataAnalystAgentTests(unittest.TestCase):
         self.assertIn("事实 14", client.payloads[1]["content"])
         self.assertNotIn("事实 15", client.payloads[1]["content"])
 
+    def test_data_analyst_preserves_period_year_labels(self):
+        target = []
+        DataAnalystAgent._append_structured_data_points(
+            target,
+            [
+                {
+                    "name": "累计用户",
+                    "value": 100,
+                    "year": "2016-2023",
+                    "confidence": 0.8,
+                },
+                {
+                    "name": "年度用户",
+                    "value": 120,
+                    "year": "2024",
+                    "confidence": 0.8,
+                },
+            ],
+        )
+
+        self.assertIsNone(target[0]["year"])
+        self.assertEqual(target[0]["year_label"], "2016-2023")
+        self.assertEqual(target[1]["year"], 2024)
+
 
 if __name__ == "__main__":
     unittest.main()
