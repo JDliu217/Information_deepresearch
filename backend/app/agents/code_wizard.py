@@ -22,9 +22,10 @@ class CodeWizardAgent(BaseAgent):
 
     name = "code_wizard"
 
+    REFERENCE_ANALYSIS_SYSTEM = "你是专业的数据分析师，擅长Python数据处理和可视化。"
     ANALYSIS_SYSTEM = """你是研究数据分析助手。只分析输入中已有的数据，不得补造或外推数据。
-代码交给受限统计解释器执行：只能对给定的 data_points、facts、insights、charts 做简单统计，
-不可 import、访问网络或文件、调用进程、属性链或动态执行。返回严格 JSON。"""
+代码由受限统计解释器执行，只能使用普通赋值、容器、下标、数字运算和明确列出的统计函数。
+不得 import、访问属性、使用循环、访问文件或网络、调用进程或执行动态代码。返回严格 JSON。"""
 
     ANALYSIS_PROMPT = r"""你是一位资深的数据分析师，擅长用Python进行数据处理和可视化。
 
@@ -117,6 +118,35 @@ df = df.dropna()
 
 注意：code 字段中的换行请使用 `\n` 字符表示，不要使用物理换行符，也**绝对不要使用续行符 `\`**。"""
 
+    # ANALYSIS_PROMPT below remains the reference prompt. This smaller prompt
+    # keeps real LLM output executable while the default interpreter is the
+    # restricted AST implementation.
+    RESTRICTED_ANALYSIS_PROMPT = r"""只使用下面提供的数据点进行统计，不得补造、外推或查询新数据。
+
+## 研究问题
+{query}
+
+## 可用数据点
+{data_points}
+
+## 解释器支持的语法
+- 只允许普通变量赋值、字典/列表/元组、下标读取、数字四则运算和函数调用。
+- 只允许调用 len、max、min、round、sum、numeric_values。
+- 禁止 import、属性访问、循环、条件语句、文件、网络和绘图库。
+- data_points 是字典列表；numeric_values(data_points) 提取其中可解析的数值，忽略布尔值、空值和非数值。
+- 必须把分析结论放进字典变量 result，并用 print(result) 输出。
+- 无数值时，总和为 0、平均值为 0；必须如实报告可用数值数量。
+
+## 输出格式
+返回严格 JSON，包含 analysis_plan、code、expected_outputs。code 不要使用 Markdown 围栏。
+code 的逻辑应等价于：
+numeric_list = numeric_values(data_points)
+numeric_count = len(numeric_list)
+numeric_total = sum(numeric_list)
+numeric_average = round(numeric_total / max(numeric_count, 1), 2)
+result = {{"data_point_count": len(data_points), "numeric_value_count": numeric_count, "numeric_total": numeric_total, "numeric_average": numeric_average}}
+print(result)"""
+
     CODE_FIX_PROMPT = r"""你是一位Python专家，需要修复执行失败的代码。
 
 ## 错误类型诊断
@@ -160,6 +190,19 @@ df = df.dropna()
     "fixed_code": "data = {{'Year': [2020, 2021], 'Value': [100, 200]}}\ndf = pd.DataFrame(data)\ndf['Value'] = pd.to_numeric(df['Value'], errors='coerce')\nprint('done')"
 }}
 ```"""
+
+    RESTRICTED_CODE_FIX_PROMPT = r"""修复受限统计解释器执行失败的代码。只能使用普通变量赋值、字典/列表、下标、数字四则运算，以及 len、max、min、round、sum、numeric_values。禁止 import、属性访问、循环、条件语句、文件、网络或绘图调用。
+
+## 原始代码
+{code}
+
+## 错误
+{error}
+
+## 输出
+{stdout}
+
+请返回严格 JSON，包含 error_analysis、fix_description、fixed_code。fixed_code 必须把结果存入 result 字典并调用 print(result)。"""
 
     CHART_SYSTEM = """你是研究数据可视化助手，只能使用输入中提供的数据。
 当前运行环境不会执行或渲染 matplotlib 等绘图代码。请按要求生成图表代码并返回 JSON，
@@ -231,6 +274,19 @@ df = df.dropna()
         if len(state.data_points) < 3:
             return state
 
+        use_reference_python = bool(
+            getattr(self.executor, "supports_reference_python", False)
+        )
+        analysis_system = (
+            self.REFERENCE_ANALYSIS_SYSTEM
+            if use_reference_python
+            else self.ANALYSIS_SYSTEM
+        )
+        analysis_prompt = (
+            self.ANALYSIS_PROMPT
+            if use_reference_python
+            else self.RESTRICTED_ANALYSIS_PROMPT
+        )
         data_summary = self._format_data_points(state.data_points)
         payload = {
             "query": state.query,
@@ -241,8 +297,8 @@ df = df.dropna()
         }
         response = await self._complete_json(
             payload,
-            system_prompt=self.ANALYSIS_SYSTEM,
-            user_prompt=self.ANALYSIS_PROMPT.format(
+            system_prompt=analysis_system,
+            user_prompt=analysis_prompt.format(
                 query=state.query,
                 data_points=data_summary,
             ),
@@ -308,8 +364,12 @@ df = df.dropna()
             try:
                 repair_result = await self._complete_json(
                     repair_payload,
-                    system_prompt=self.ANALYSIS_SYSTEM,
-                    user_prompt=self.CODE_FIX_PROMPT.format(
+                    system_prompt=analysis_system,
+                    user_prompt=(
+                        self.CODE_FIX_PROMPT
+                        if use_reference_python
+                        else self.RESTRICTED_CODE_FIX_PROMPT
+                    ).format(
                         code=repair_payload["code"],
                         error=repair_payload["error"],
                         stdout=repair_payload["stdout"],

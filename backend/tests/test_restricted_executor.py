@@ -25,6 +25,27 @@ class RestrictedCodeExecutorTests(unittest.TestCase):
         self.assertIn("count", execution.stdout)
         self.assertIsNotNone(execution.duration_ms)
 
+    def test_extracts_only_finite_numeric_values_from_metric_records(self):
+        execution = self.executor.execute(
+            "result = {'values': numeric_values(data_points)}",
+            {
+                "data_points": [
+                    {"value": 12},
+                    {"value": "1,234.5"},
+                    {"value": " 7.25 "},
+                    {"value": "2024年"},
+                    {"value": True},
+                    {"value": None},
+                ],
+                "facts": [],
+                "insights": [],
+                "charts": [],
+            },
+        )
+
+        self.assertEqual(execution.status, "succeeded")
+        self.assertEqual(execution.result["values"], [12, 1234.5, 7.25])
+
     def test_rejects_import_and_attribute_access(self):
         for code in ("import os", "data_points.__class__"):
             with self.subTest(code=code):

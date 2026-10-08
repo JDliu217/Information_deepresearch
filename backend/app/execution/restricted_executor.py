@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import ast
 import json
+import math
 import time
 from copy import deepcopy
 from typing import Any
@@ -22,6 +23,7 @@ class _RejectedCode(ValueError):
 class RestrictedCodeExecutor:
     """解释有界统计表达式，返回统一的 CodeExecution 记录。"""
 
+    supports_reference_python = False
     allowed_context_names = {"charts", "data_points", "facts", "insights"}
     max_code_chars = 4_000
     max_context_chars = 100_000
@@ -166,11 +168,44 @@ class RestrictedCodeExecutor:
                     raise _RejectedCode("标准输出超过长度限制")
                 stdout.append(output)
                 return None
-            functions = {"len": len, "max": max, "min": min, "round": round, "sum": sum}
+            functions = {
+                "len": len,
+                "max": max,
+                "min": min,
+                "round": round,
+                "sum": sum,
+                "numeric_values": self._numeric_values,
+            }
             if name not in functions:
                 raise _RejectedCode("代码只能调用允许的统计函数")
             return functions[name](*args)
         raise _RejectedCode("代码包含不支持的语法")
+
+    @staticmethod
+    def _numeric_values(data_points: Any) -> list[int | float]:
+        """Return bounded numeric values from the input metric records."""
+
+        if not isinstance(data_points, list):
+            raise _RejectedCode("numeric_values 只接受数据点列表")
+        values: list[int | float] = []
+        for point in data_points[:1_000]:
+            if not isinstance(point, dict):
+                continue
+            value = point.get("value")
+            if isinstance(value, bool):
+                continue
+            if isinstance(value, (int, float)):
+                numeric = value
+            elif isinstance(value, str):
+                try:
+                    numeric = float(value.replace(",", "").strip())
+                except ValueError:
+                    continue
+            else:
+                continue
+            if math.isfinite(numeric) and abs(numeric) <= 1_000_000_000:
+                values.append(numeric)
+        return values
 
     @staticmethod
     def _record(

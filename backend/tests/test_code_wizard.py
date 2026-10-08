@@ -101,6 +101,38 @@ class FailingThenSucceedingExecutor:
 
 
 class CodeWizardAgentTests(unittest.TestCase):
+    def test_restricted_executor_gets_a_prompt_for_its_supported_syntax(self):
+        class CapturingPromptClient(MockLLMClient):
+            def __init__(self):
+                self.system_prompt = ""
+                self.user_prompt = ""
+
+            async def complete_json(
+                self,
+                role,
+                payload,
+                system_prompt="",
+                user_prompt="",
+                temperature=None,
+                max_tokens=None,
+            ):
+                self.system_prompt = system_prompt
+                self.user_prompt = user_prompt
+                return await super().complete_json(role, payload)
+
+        client = CapturingPromptClient()
+        state = ResearchState("研究问题")
+        add_three_data_points(state)
+
+        asyncio.run(CodeWizardAgent(client).run(state))
+
+        self.assertIn("受限统计解释器", client.system_prompt)
+        self.assertIn("numeric_values(data_points)", client.user_prompt)
+        self.assertNotIn("pd.DataFrame", client.user_prompt)
+        # Keep the original Python/pandas prompt available for a future
+        # isolated runner that supports the reference execution contract.
+        self.assertIn("pd.DataFrame", CodeWizardAgent.ANALYSIS_PROMPT)
+
     def test_code_wizard_executes_generated_plan_and_records_result(self):
         async def run():
             state = ResearchState("新能源汽车行业的数据趋势是什么？")
