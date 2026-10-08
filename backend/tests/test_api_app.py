@@ -58,6 +58,14 @@ class ApiAppTests(unittest.TestCase):
         with self.assertRaises(ValidationError):
             ResearchRequest(query="")
 
+    def test_research_request_rejects_query_replaced_by_question_marks(self):
+        with self.assertRaisesRegex(ValidationError, "UTF-8"):
+            ResearchRequest(query="???????????")
+
+    def test_research_request_rejects_query_with_most_characters_replaced(self):
+        with self.assertRaisesRegex(ValidationError, "UTF-8"):
+            ResearchRequest(query="????B??")
+
     def test_research_stream_returns_sse_frames(self):
         runtime = FakeRuntime()
         client = TestClient(create_app(runtime=runtime))
@@ -74,6 +82,19 @@ class ApiAppTests(unittest.TestCase):
         self.assertIn('"query":"测试问题"', response.text)
         self.assertIn("event: research_completed\n", response.text)
         self.assertEqual(runtime.calls, [("测试问题", "api-session")])
+
+    def test_research_stream_rejects_corrupted_query_before_starting_runtime(self):
+        runtime = FakeRuntime()
+        client = TestClient(create_app(runtime=runtime))
+
+        response = client.post(
+            "/api/research/stream",
+            json={"query": "???????????", "session_id": "bad-encoding"},
+        )
+
+        self.assertEqual(response.status_code, 422)
+        self.assertIn("UTF-8", response.text)
+        self.assertEqual(runtime.calls, [])
 
     def test_status_and_cancel_endpoints_use_run_control(self):
         control = InMemoryRunControlStore()

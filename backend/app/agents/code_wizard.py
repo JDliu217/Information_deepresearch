@@ -64,7 +64,7 @@ data = {{ \
 
 ### 1. 数据精简
 - **只选取最关键的5-10个数据点**，不要把所有数据都写入代码
-- **相同指标去重**：如果有多个年份的同一指标，只保留有代表性的几个
+- **相同指标去重**：如果同一指标有多个时期或类别，只保留有代表性的几个
 - **代码总长度不超过40行**
 - **禁止生成重复数据**：如 [2020, 2020, 2020...] 这种重复是错误的
 
@@ -73,11 +73,12 @@ data = {{ \
 ```python
 data = {{
     "Year": [2018, 2020, 2022, 2024],
-    "Market_Size": [604.2, 1500, 2300, 3000]
+    "Value": [100, 200, 300, 400]
 }}
 df = pd.DataFrame(data)
 ```
 
+示例中的名称和数值仅用于说明数据格式；实际代码只能使用提供的数据点。
 **禁止**使用复杂的嵌套列表 `[[...], [...]]`。
 
 ### 3. 数据清洗
@@ -94,7 +95,7 @@ df = df.dropna()
 - **禁止plt.rcParams**，中文字体已预设
 
 ### 5. 高级图表样式（必须遵守）
-生成专业、高端的商业图表，要求：
+生成清晰、专业且符合当前研究主题的图表，要求：
 - **图表尺寸**: `plt.figure(figsize=(12, 7), dpi=200)`
 - **seaborn主题**: `sns.set_theme(style='whitegrid', palette='husl')`
 - **标题**: `plt.title('标题', fontsize=18, fontweight='bold', pad=20)`
@@ -111,7 +112,7 @@ df = df.dropna()
 ```json
 {{
     "analysis_plan": "简要分析计划",
-    "code": "sns.set_theme(style='whitegrid')\ndata = {{'Year': [2020, 2022, 2024], 'Value': [100, 150, 200]}}\ndf = pd.DataFrame(data)\ndf['Value'] = pd.to_numeric(df['Value'], errors='coerce')\nplt.figure(figsize=(12, 7), dpi=200)\nplt.plot(df['Year'], df['Value'], linewidth=2.5, marker='o', markersize=8, color='#6366f1')\nplt.fill_between(df['Year'], df['Value'], alpha=0.15, color='#6366f1')\nplt.title('市场规模趋势', fontsize=18, fontweight='bold')\nplt.xlabel('年份', fontsize=14)\nplt.ylabel('规模（亿元）', fontsize=14)\nplt.xticks(fontsize=12)\nplt.yticks(fontsize=12)\nsns.despine()\nplt.savefig('chart.png', dpi=200, bbox_inches='tight', facecolor='white')",
+    "code": "sns.set_theme(style='whitegrid')\ndata = {{'Year': [2020, 2022, 2024], 'Value': [100, 150, 200]}}\ndf = pd.DataFrame(data)\ndf['Value'] = pd.to_numeric(df['Value'], errors='coerce')\nplt.figure(figsize=(12, 7), dpi=200)\nplt.plot(df['Year'], df['Value'], linewidth=2.5, marker='o', markersize=8, color='#6366f1')\nplt.fill_between(df['Year'], df['Value'], alpha=0.15, color='#6366f1')\nplt.title('指标变化趋势', fontsize=18, fontweight='bold')\nplt.xlabel('年份', fontsize=14)\nplt.ylabel('指标值', fontsize=14)\nplt.xticks(fontsize=12)\nplt.yticks(fontsize=12)\nsns.despine()\nplt.savefig('chart.png', dpi=200, bbox_inches='tight', facecolor='white')",
     "expected_outputs": ["图表描述"]
 }}
 ```

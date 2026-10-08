@@ -84,6 +84,10 @@ class DataAnalystAgentTests(unittest.TestCase):
         self.assertIn("从以上搜索结果中提取所有可量化的数据点", client.prompts[0][1])
         self.assertIn("实体类型定义", client.prompts[1][1])
         self.assertIn("时间序列数据 → line (折线图)", client.prompts[2][1])
+        combined_prompts = "\n".join(user_prompt for _, user_prompt in client.prompts)
+        self.assertNotIn("人工智能", combined_prompts)
+        self.assertNotIn("计算机视觉", combined_prompts)
+        self.assertIn("研究主题", combined_prompts)
         self.assertIn("事实 (来源: 未知)", client.payloads[0]["search_results"])
         self.assertEqual(client.payloads[1]["content"], "事实")
         self.assertEqual(

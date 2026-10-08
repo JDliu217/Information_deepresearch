@@ -51,6 +51,27 @@ class GraphNodeTests(unittest.TestCase):
         self.assertEqual(started["events"][0]["phase"], "planning")
         self.assertEqual(result["events"][0]["type"], "outline_ready")
 
+    def test_plan_node_stops_before_search_when_planner_cannot_validate_an_outline(self):
+        class InvalidPlanner:
+            name = "planner"
+
+            async def run(self, state):
+                state.errors.append("Failed to generate research plan after retries")
+                return state
+
+        nodes = ResearchGraphNodes(
+            planner=InvalidPlanner(),
+            researcher=self.nodes.researcher,
+            fact_extractor=self.nodes.fact_extractor,
+            data_analyst=self.nodes.data_analyst,
+            code_wizard=self.nodes.code_wizard,
+            writer=self.nodes.writer,
+            critic=self.nodes.critic,
+        )
+
+        with self.assertRaisesRegex(ValueError, "停止后续搜索"):
+            asyncio.run(nodes.plan(initial_graph_state(ResearchState("测试问题"))))
+
     def test_extract_facts_consumes_supplementary_flag_after_emitting_event(self):
         state = ResearchState("测试问题")
         state.raw_sources = [

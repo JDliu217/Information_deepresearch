@@ -64,6 +64,9 @@ class ResearchGraphNodes:
     async def plan(self, graph_state: ResearchGraphState) -> dict[str, Any]:
         state = deepcopy(graph_state["research_state"])
         await self.planner.run(state)
+        if not state.outline:
+            reason = state.errors[-1] if state.errors else "Planner 没有生成研究大纲"
+            raise ValueError(f"研究规划失败，停止后续搜索：{reason}")
         return {
             "research_state": state,
             "events": [

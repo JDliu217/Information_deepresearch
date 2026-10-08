@@ -64,6 +64,7 @@ class MockLLMClient(LLMClient):
                 raise ValueError("planner 请求缺少 query")
 
             return {
+                "research_subject": query,
                 "outline": [
                     {
                         "title": "现状与定义",
@@ -72,12 +73,12 @@ class MockLLMClient(LLMClient):
                     },
                     {
                         "title": "问题与证据",
-                        "description": "整理公开来源中的事实、数据和主要争议。",
+                        "description": f"围绕“{query}”整理公开来源中的事实、数据和主要争议。",
                         "search_queries": [f"{query} 的主要问题和公开证据"],
                     },
                     {
                         "title": "趋势与建议",
-                        "description": "根据已有证据判断未来趋势并提出建议。",
+                        "description": f"根据关于“{query}”的已有证据判断未来趋势并提出建议。",
                         "search_queries": [f"{query} 的未来趋势和改进建议"],
                     },
                 ],

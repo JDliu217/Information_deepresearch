@@ -1,8 +1,8 @@
 """Research planning agent.
 
-The planning contract follows the reference V2 architect flow: the model is
-asked for a compact, flat JSON plan first and the agent converts it into the
-structured outline used by this project's LangGraph state.
+The planner asks the model for a topic-specific JSON plan and validates its
+declared subject before passing the outline to the search stage. Reference-style
+flat responses are accepted only when they provide enough topic context.
 """
 
 from __future__ import annotations
@@ -22,54 +22,56 @@ class PlannerAgent(BaseAgent):
     name = "planner"
 
     PLANNING_SYSTEM = (
-        "你是一位专业的行业研究规划师。请严格按照要求的 JSON 格式输出，"
-        "不要添加任何额外内容。"
+        "你是一位专业的研究规划师，不预设研究领域。先识别用户问题中的研究对象和目标，"
+        "再按该主题设计研究计划。严格按 JSON 格式输出，不要添加额外内容。"
     )
     REVISION_SYSTEM = "你是总架构师，需要判断是否需要调整研究计划。"
-    PLANNING_PROMPT = r"""研究课题：{query}
+    PLANNING_PROMPT = r"""## 用户的研究问题
+{query}
 
-请为该课题生成研究大纲和研究假设，输出JSON格式如下：
+请先识别问题的核心研究对象和研究目标，再为这个问题设计研究计划。不能把问题改成另一个主题，也不能套用固定领域的大纲。
 
+## 规划要求
+1. 生成5-8个相互衔接的章节，章节结构要由当前研究对象和问题决定。人物研究可按生平阶段、时代背景、作品或影响组织；只有在用户问题确实涉及这些方面时才采用。
+2. research_subject填写用户问题中直接出现的核心对象名称，不要翻译、替换或另选对象。每个章节都要明确回答研究问题的一部分；章节描述和搜索词都要围绕该对象，搜索词必须包含对象名称和本章要查的具体方面。
+3. 不要仅因为某类内容常见就加入无关的行业、组织、技术或政策分析。
+4. 只有研究问题需要可量化证据时才设置 requires_data=true；只有存在可比较的数据且图表有帮助时才设置 requires_chart=true。定性研究应将二者设为 false。
+5. 提出3-5个能由研究材料回答的具体问题。只有适合验证假设的课题才填写 hypotheses；描述性课题可以返回空列表，不要强造市场或趋势假设。
+6. 不要在规划阶段编造事实、数据或来源。
+
+## 输出格式
+只返回一个 JSON 对象，格式如下：
 {{
-  "hypothesis_1": "关于市场/行业趋势的假设（需要验证）",
-  "hypothesis_2": "关于竞争格局或技术发展的假设（需要验证）",
-  "hypothesis_3": "关于政策或外部因素影响的假设（需要验证）",
-  "sec_1_title": "市场概况",
-  "sec_1_desc": "描述市场规模、增速",
-  "sec_1_query": "搜索关键词",
-  "sec_2_title": "竞争格局",
-  "sec_2_desc": "描述主要企业",
-  "sec_2_query": "搜索关键词",
-  "sec_3_title": "技术趋势",
-  "sec_3_desc": "描述核心技术",
-  "sec_3_query": "搜索关键词",
-  "sec_4_title": "政策环境",
-  "sec_4_desc": "描述相关政策",
-  "sec_4_query": "搜索关键词",
-  "sec_5_title": "挑战机遇",
-  "sec_5_desc": "描述挑战和机会",
-  "sec_5_query": "搜索关键词",
-  "sec_6_title": "未来展望",
-  "sec_6_desc": "描述发展趋势",
-  "sec_6_query": "搜索关键词",
-  "questions": "核心问题1;核心问题2;核心问题3"
+  "research_subject": "问题中的核心研究对象",
+  "outline": [
+    {{
+      "id": "sec_1",
+      "title": "与研究对象相关的章节标题",
+      "description": "本章节需要回答的问题和覆盖范围",
+      "section_type": "qualitative、quantitative 或 mixed",
+      "requires_data": false,
+      "requires_chart": false,
+      "search_queries": ["包含核心研究对象的具体搜索词"]
+    }}
+  ],
+  "research_questions": ["具体研究问题"],
+  "hypotheses": [],
+  "key_entities": [],
+  "mind_map": {{}}
 }}
 
-研究假设示例：
-- 假设市场规模将持续增长，需要用数据验证增速
-- 假设某类技术会成为主流，需要找证据支持或反驳
-- 假设政策变化会影响行业格局，需要分析政策走向
+outline必须有5-8章。所有章节、研究问题、假设和搜索词都必须与用户的研究问题直接相关。不要输出示例主题或模板占位文字。"""
+    PLANNING_RETRY_PROMPT = """请重新为以下用户问题制定研究计划：
+{query}
 
-请根据研究课题填写具体内容，每个字段都是字符串类型。"""
-    PLANNING_RETRY_PROMPT = """请为"{query}"生成研究大纲。
+先识别问题中的核心研究对象和目标，再生成5-8个与该主题直接相关的章节。不要改写成其他主题，不要套用固定领域的大纲；每个章节描述和搜索词都要围绕核心对象，搜索词应包含核心对象名称和要查的具体方面。只在确有需要时设置数据、图表和研究假设。
 
-输出JSON格式：
-{{"outline": [
-    {{"id": "sec_1", "title": "章节标题", "description": "描述", "section_type": "mixed", "requires_data": true, "requires_chart": false, "search_queries": ["关键词1", "关键词2"]}},
-    ...更多章节(共5-8个)...
+严格返回 JSON：
+{{"research_subject": "问题中的核心研究对象", "outline": [
+    {{"id": "sec_1", "title": "章节标题", "description": "章节要回答的问题", "section_type": "qualitative", "requires_data": false, "requires_chart": false, "search_queries": ["对象名称+具体问题"]}}
 ], "research_questions": ["问题1", "问题2", "问题3"], "key_entities": []}}
 
-要求：outline必须包含5-8个章节，覆盖市场概况、企业竞争、技术趋势、政策环境、未来展望等方面。"""
+outline必须包含5-8个章节，不能包含与用户问题无关的主题。"""
     REVISION_PROMPT = r"""你是总架构师，需要根据研究进展动态调整大纲。
 
 ## 原始问题
@@ -130,6 +132,7 @@ class PlannerAgent(BaseAgent):
             if isinstance(outline_value, list) and len(outline_value) >= 3:
                 try:
                     validated_outline = self._validate_outline(outline_value)
+                    self._validate_topic_alignment(query, result, validated_outline)
                 except ValueError:
                     validated_outline = None
                 if validated_outline is not None and len(validated_outline) >= 3:
@@ -184,6 +187,37 @@ class PlannerAgent(BaseAgent):
     run_revision = revise
 
     @staticmethod
+    def _validate_topic_alignment(
+        query: str,
+        result: dict[str, Any],
+        outline: list[dict[str, Any]],
+    ) -> None:
+        """Reject a model plan that cannot be tied to the user's topic."""
+
+        raw_subject = result.get("research_subject")
+        if not isinstance(raw_subject, str) or not raw_subject.strip():
+            raise ValueError("Planner 缺少 research_subject，无法校验研究主题")
+
+        subject = raw_subject.strip()
+        if subject.casefold() not in query.casefold():
+            raise ValueError("Planner 的 research_subject 不在用户问题中")
+
+        for index, section in enumerate(outline, start=1):
+            description = str(section.get("description", ""))
+            if subject.casefold() not in description.casefold():
+                raise ValueError(
+                    f"Planner 第 {index} 个章节描述没有明确关联核心研究对象"
+                )
+            search_queries = section.get("search_queries", [])
+            if not search_queries or not all(
+                subject.casefold() in str(search_query).casefold()
+                for search_query in search_queries
+            ):
+                raise ValueError(
+                    f"Planner 第 {index} 个章节的搜索词没有围绕核心研究对象"
+                )
+
+    @staticmethod
     def _convert_flat_to_outline(flat_result: dict[str, Any]) -> dict[str, Any]:
         """Convert the reference architect's flat fields to state fields."""
         outline: list[dict[str, Any]] = []
@@ -199,8 +233,8 @@ class PlannerAgent(BaseAgent):
                 "title": title or f"章节{index}",
                 "description": description,
                 "section_type": "mixed",
-                "requires_data": index <= 2,
-                "requires_chart": index <= 2,
+                "requires_data": bool(flat_result.get(f"sec_{index}_requires_data", False)),
+                "requires_chart": bool(flat_result.get(f"sec_{index}_requires_chart", False)),
                 "priority": index,
                 "search_queries": [query or title or f"章节{index}"],
             })
@@ -220,13 +254,16 @@ class PlannerAgent(BaseAgent):
                     "evidence_for": [],
                     "evidence_against": [],
                 })
-        return {
+        converted = {
             "outline": outline,
             "research_questions": questions,
             "hypotheses": hypotheses,
             "key_entities": flat_result.get("key_entities", []),
             "mind_map": flat_result.get("mind_map", {}),
         }
+        if "research_subject" in flat_result:
+            converted["research_subject"] = flat_result["research_subject"]
+        return converted
 
     @staticmethod
     def _validate_outline(value: Any) -> list[dict[str, Any]]:

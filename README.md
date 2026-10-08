@@ -122,6 +122,14 @@ $env:PYTHONPATH = "backend"
 .venv\Scripts\python.exe -m unittest discover -s backend/tests -v
 ```
 
+使用 PowerShell 调用 SSE API 时，请用项目提供的脚本发送中文 query。脚本先把请求写入
+无 BOM 的 UTF-8 临时文件，再交给 `curl.exe`，避免 Windows PowerShell 5.1 的字符串管道
+把中文转换成问号。先启动 API，再从项目根目录执行：
+
+```powershell
+.\scripts\research_sse.ps1 -Query "介绍一下诗人王维的一生" -SessionId "wangwei-sse-test-02"
+```
+
 真实服务配置示例见 `.env.example`。复制为项目根目录的 `.env` 后填写密钥：
 
 ```powershell

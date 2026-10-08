@@ -27,11 +27,10 @@ class DataAnalystAgent(BaseAgent):
 
 ## 任务
 从以上搜索结果中提取所有可量化的数据点，包括：
-1. 市场规模数据（金额、单位、年份）
-2. 增长率数据（百分比、时间段）
-3. 市场份额数据（企业/领域、占比）
-4. 排名数据（企业、产品、技术）
-5. 时间序列数据（同一指标在不同年份的值）
+1. 与研究主题有关的数量、金额、年龄、时长、日期或年代等明确数值
+2. 来源中明确报告的比率、变化幅度、排名或分类占比（仅当主题涉及这些信息时）
+3. 同一指标在不同时间或类别下的可比较数据
+4. 与研究问题直接相关、且原始材料明确给出的其他数值
 
 ## 输出要求
 请输出JSON格式：
@@ -40,49 +39,44 @@ class DataAnalystAgent(BaseAgent):
     "data_points": [
         {{
             "id": "dp_001",
-            "name": "中国AI市场规模",
-            "value": 5000,
-            "unit": "亿元",
-            "year": 2024,
-            "source": "艾瑞咨询",
-            "category": "market_size",
-            "confidence": 0.9
+            "name": "材料中指标的名称",
+            "value": 0,
+            "unit": "材料中的单位",
+            "year": null,
+            "source": "材料中的来源名称",
+            "category": "与主题相符的类别",
+            "confidence": 0.0
         }}
     ],
     "time_series": [
         {{
             "id": "ts_001",
-            "metric": "AI市场规模",
-            "unit": "亿元",
+            "metric": "材料中的指标名称",
+            "unit": "材料中的单位",
             "data": [
-                {{"year": 2020, "value": 3200}},
-                {{"year": 2021, "value": 4100}},
-                {{"year": 2024, "value": 8500}}
+                {{"year": 0, "value": 0}}
             ],
-            "source": "艾瑞咨询"
+            "source": "材料中的来源名称"
         }}
     ],
     "distributions": [
         {{
             "id": "dist_001",
-            "name": "细分领域市场份额",
-            "year": 2024,
+            "name": "材料中明确报告的分类指标",
+            "year": null,
             "data": [
-                {{"category": "计算机视觉", "value": 32, "unit": "%"}},
-                {{"category": "自然语言处理", "value": 28, "unit": "%"}}
+                {{"category": "材料中的类别", "value": 0, "unit": "材料中的单位"}}
             ],
-            "source": "IDC"
+            "source": "材料中的来源名称"
         }}
     ],
-    "insights": [
-        "中国AI市场规模在2024年突破5000亿元",
-        "计算机视觉是最大的细分领域，占比32%"
-    ]
+    "insights": ["仅根据输入材料归纳出的洞察"]
 }}
 ```
 
 注意：
 - 只提取有明确来源的数据
+- JSON 示例中的 0、占位名称和空值只用于说明字段，不是研究事实；不能复制为输出数据
 - confidence表示数据可信度(0-1)
 - 如果没有找到相关数据，返回空数组"""
 
@@ -98,26 +92,27 @@ class DataAnalystAgent(BaseAgent):
 从以上文本中提取实体和关系，构建知识图谱。
 
 ## 实体类型定义
-- core: 核心概念（如：人工智能、大模型）
-- tech: 技术（如：深度学习、计算机视觉、NLP）
-- company: 企业（如：百度、阿里巴巴、华为）
-- policy: 政策（如：AI发展规划、数据安全法）
-- product: 产品（如：ChatGPT、文心一言）
-- person: 人物（如：创始人、CEO）
+- core: 研究主题中的核心实体或概念
+- person: 人物
+- organization: 组织或机构
+- place: 地点
+- event: 事件
+- work: 作品
+- technology: 技术
+- policy: 政策
+- product: 产品
+- 也可根据材料使用其他准确的实体类型；不要为了匹配固定类型而误分类
 
 ## 输出要求
 请输出JSON格式：
 ```json
 {{
     "nodes": [
-        {{"id": "ai", "name": "人工智能", "type": "core", "importance": 10}},
-        {{"id": "baidu", "name": "百度", "type": "company", "importance": 8}},
-        {{"id": "cv", "name": "计算机视觉", "type": "tech", "importance": 7}}
+        {{"id": "node_1", "name": "材料中的实体名称", "type": "实体类型", "importance": 8}},
+        {{"id": "node_2", "name": "与主题相关的另一实体", "type": "实体类型", "importance": 6}}
     ],
     "edges": [
-        {{"source": "baidu", "target": "ai", "relation": "布局"}},
-        {{"source": "cv", "target": "ai", "relation": "属于"}},
-        {{"source": "baidu", "target": "cv", "relation": "研发"}}
+        {{"source": "node_1", "target": "node_2", "relation": "材料明确说明的关系"}}
     ]
 }}
 ```
@@ -160,14 +155,14 @@ class DataAnalystAgent(BaseAgent):
     "charts": [
         {{
             "id": "chart_001",
-            "title": "中国AI市场规模",
-            "subtitle": "2020-2024年市场规模（亿元）",
+            "title": "根据输入数据确定的图表标题",
+            "subtitle": "指标名称和时间或分类范围",
             "type": "line",
             "echarts_option": {{
                 "grid": {{"left": "3%", "right": "4%", "bottom": "3%", "containLabel": true}},
                 "xAxis": {{
                     "type": "category",
-                    "data": ["2020", "2021", "2022", "2023", "2024"],
+                    "data": ["输入数据中的类别或时间"],
                     "axisLine": {{"lineStyle": {{"color": "#e8e8e8"}}}},
                     "axisLabel": {{"color": "#666"}}
                 }},
@@ -178,7 +173,7 @@ class DataAnalystAgent(BaseAgent):
                 }},
                 "series": [{{
                     "type": "line",
-                    "data": [3200, 4100, 5200, 6800, 8500],
+                    "data": [0],
                     "smooth": true,
                     "symbol": "circle",
                     "symbolSize": 8,
@@ -190,28 +185,22 @@ class DataAnalystAgent(BaseAgent):
         }},
         {{
             "id": "chart_002",
-            "title": "细分领域市场份额",
-            "subtitle": "2024年各技术领域占比",
+            "title": "根据输入数据确定的分类对比",
+            "subtitle": "输入数据中的分类范围和指标",
             "type": "horizontal_bar",
             "echarts_option": {{
                 "grid": {{"left": "25%", "right": "15%", "top": "5%", "bottom": "5%"}},
                 "xAxis": {{"type": "value", "show": false, "max": 100}},
                 "yAxis": {{
                     "type": "category",
-                    "data": ["计算机视觉", "自然语言处理", "机器学习平台", "智能语音", "其他"],
+                    "data": ["输入数据中的类别"],
                     "axisLine": {{"show": false}},
                     "axisTick": {{"show": false}},
                     "axisLabel": {{"color": "#333", "fontSize": 13}}
                 }},
                 "series": [{{
                     "type": "bar",
-                    "data": [
-                        {{"value": 32, "itemStyle": {{"color": "#1677ff"}}}},
-                        {{"value": 28, "itemStyle": {{"color": "#722ed1"}}}},
-                        {{"value": 24, "itemStyle": {{"color": "#1677ff"}}}},
-                        {{"value": 10, "itemStyle": {{"color": "#52c41a"}}}},
-                        {{"value": 6, "itemStyle": {{"color": "#fa8c16"}}}}
-                    ],
+                    "data": [{{"value": 0}}],
                     "barWidth": 12,
                     "label": {{
                         "show": true,
@@ -226,7 +215,9 @@ class DataAnalystAgent(BaseAgent):
         }}
     ]
 }}
-```"""
+```
+
+注意：图表字段中的名称和数值只展示结构。输出时只能填入上方可用数据中的类别和数值；不得复制占位文本或自行补造数值。没有可比较的数据时返回空 charts 列表。"""
 
     allowed_chart_types = {
         "line",

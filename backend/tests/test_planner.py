@@ -39,16 +39,17 @@ class PlannerAgentTests(unittest.TestCase):
             async def complete_json(self, role, payload, system_prompt="", user_prompt=""):
                 self.user_prompt = user_prompt
                 return {
-                    "hypothesis_1": "增长受市场需求影响",
+                    "research_subject": "王维",
+                    "hypothesis_1": "王维的创作受到时代与个人经历影响",
                     "sec_1_title": "发展历程",
-                    "sec_1_desc": "梳理关键阶段",
-                    "sec_1_query": "发展历程",
+                    "sec_1_desc": "梳理王维一生中的关键阶段",
+                    "sec_1_query": "王维 生平发展历程",
                     "sec_2_title": "业务变化",
-                    "sec_2_desc": "分析业务变化",
-                    "sec_2_query": "业务变化",
+                    "sec_2_desc": "分析王维创作与经历的变化",
+                    "sec_2_query": "王维 创作经历变化",
                     "sec_3_title": "未来趋势",
-                    "sec_3_desc": "判断未来方向",
-                    "sec_3_query": "未来趋势",
+                    "sec_3_desc": "评价王维作品的文学影响",
+                    "sec_3_query": "王维 文学影响",
                     "questions": "经历了哪些阶段？;未来趋势是什么？",
                 }
 
@@ -57,16 +58,156 @@ class PlannerAgentTests(unittest.TestCase):
 
         async def run():
             client = FlatPlannerClient()
-            state = ResearchState("测试课题")
+            state = ResearchState("介绍一下诗人王维的一生")
             await PlannerAgent(client).run(state)
             return state, client
 
         state, client = asyncio.run(run())
         self.assertEqual([section["id"] for section in state.outline], ["sec_1", "sec_2", "sec_3"])
-        self.assertEqual(state.outline[0]["search_queries"], ["发展历程"])
-        self.assertEqual(state.hypotheses[0]["content"], "增长受市场需求影响")
+        self.assertEqual(state.outline[0]["search_queries"], ["王维 生平发展历程"])
+        self.assertFalse(state.outline[0]["requires_data"])
+        self.assertFalse(state.outline[0]["requires_chart"])
+        self.assertEqual(state.hypotheses[0]["content"], "王维的创作受到时代与个人经历影响")
         self.assertEqual(state.research_questions, ["经历了哪些阶段？", "未来趋势是什么？"])
-        self.assertIn('"sec_1_title"', client.user_prompt)
+        self.assertIn("介绍一下诗人王维的一生", client.user_prompt)
+        self.assertIn('"outline"', client.user_prompt)
+        self.assertNotIn("市场概况", client.user_prompt)
+
+    def test_planner_prompt_is_topic_driven_for_a_biography(self):
+        class CapturingPlannerClient(LLMClient):
+            def __init__(self):
+                self.system_prompt = ""
+                self.user_prompt = ""
+
+            async def complete_json(self, role, payload, system_prompt="", user_prompt=""):
+                self.system_prompt = system_prompt
+                self.user_prompt = user_prompt
+                return {
+                    "research_subject": "王维",
+                    "outline": [
+                        {"title": title, "description": "围绕王维及其生平研究。", "search_queries": [query]}
+                        for title, query in (
+                            ("生平经历", "王维 生平经历"),
+                            ("时代背景", "王维 所处时代"),
+                            ("作品与影响", "王维 代表作品 文学影响"),
+                        )
+                    ],
+                    "research_questions": ["王维经历了哪些重要阶段？"],
+                    "hypotheses": [],
+                    "key_entities": ["王维"],
+                }
+
+            async def complete_text(self, role, payload, system_prompt="", user_prompt="", **kwargs):
+                return ""
+
+        async def run():
+            client = CapturingPlannerClient()
+            state = ResearchState("介绍一下诗人王维的一生")
+            await PlannerAgent(client).run(state)
+            return state, client
+
+        state, client = asyncio.run(run())
+
+        self.assertEqual(state.outline[0]["title"], "生平经历")
+        self.assertIn("介绍一下诗人王维的一生", client.user_prompt)
+        self.assertIn("人物研究可按生平阶段", client.user_prompt)
+        self.assertIn("不能把问题改成另一个主题", client.user_prompt)
+        self.assertIn("research_subject填写用户问题中直接出现的核心对象名称", client.user_prompt)
+        self.assertNotIn("市场概况", client.user_prompt)
+        self.assertNotIn("AI芯片", client.user_prompt)
+
+    def test_planner_retries_when_model_changes_the_research_subject(self):
+        class DriftingPlannerClient(LLMClient):
+            def __init__(self):
+                self.calls = []
+
+            async def complete_json(self, role, payload, system_prompt="", user_prompt=""):
+                self.calls.append(user_prompt)
+                if len(self.calls) == 1:
+                    subject = "人工智能"
+                    titles = ["市场概况", "竞争格局", "技术趋势"]
+                else:
+                    subject = "王维"
+                    titles = ["生平经历", "时代背景", "作品与影响"]
+                return {
+                    "research_subject": subject,
+                    "outline": [
+                        {
+                            "title": title,
+                            "description": f"围绕{subject}整理证据。",
+                            "search_queries": [f"{subject} {title}"],
+                        }
+                        for title in titles
+                    ],
+                    "research_questions": [f"{subject}有哪些重要信息？"],
+                    "key_entities": [subject],
+                }
+
+            async def complete_text(self, role, payload, system_prompt="", user_prompt="", **kwargs):
+                return ""
+
+        async def run():
+            client = DriftingPlannerClient()
+            state = ResearchState("介绍一下诗人王维的一生")
+            await PlannerAgent(client).run(state)
+            return state, client
+
+        state, client = asyncio.run(run())
+
+        self.assertEqual(len(client.calls), 2)
+        self.assertEqual(state.outline[0]["title"], "生平经历")
+        self.assertTrue(
+            all(
+                "王维" in query
+                for section in state.outline
+                for query in section["search_queries"]
+            )
+        )
+
+    def test_planner_retries_legacy_flat_plan_without_a_research_subject(self):
+        class LegacyThenStructuredClient(LLMClient):
+            def __init__(self):
+                self.calls = 0
+
+            async def complete_json(self, role, payload, system_prompt="", user_prompt=""):
+                self.calls += 1
+                if self.calls == 1:
+                    return {
+                        "sec_1_title": "市场概况",
+                        "sec_1_desc": "分析市场规模",
+                        "sec_1_query": "AI 市场规模",
+                        "sec_2_title": "竞争格局",
+                        "sec_2_desc": "分析企业竞争",
+                        "sec_2_query": "AI 企业竞争",
+                        "sec_3_title": "技术趋势",
+                        "sec_3_desc": "分析技术趋势",
+                        "sec_3_query": "AI 技术趋势",
+                    }
+                return {
+                    "research_subject": "王维",
+                    "outline": [
+                        {
+                            "title": title,
+                            "description": f"围绕王维研究{title}。",
+                            "search_queries": [f"王维 {title}"],
+                        }
+                        for title in ("生平经历", "时代背景", "作品与影响")
+                    ],
+                }
+
+            async def complete_text(self, role, payload, system_prompt="", user_prompt="", **kwargs):
+                return ""
+
+        async def run():
+            client = LegacyThenStructuredClient()
+            state = ResearchState("介绍一下诗人王维的一生")
+            await PlannerAgent(client).run(state)
+            return state, client
+
+        state, client = asyncio.run(run())
+
+        self.assertEqual(client.calls, 2)
+        self.assertEqual(state.outline[0]["title"], "生平经历")
 
     def test_planner_revision_uses_reference_context_without_consuming_prompt_queries(self):
         class RevisionClient(MockLLMClient):
@@ -129,6 +270,8 @@ class PlannerAgentTests(unittest.TestCase):
         self.assertEqual(state.phase, "init")
         retry_prompt = client.calls[1]["user_prompt"]
         self.assertIn('"key_entities": []', retry_prompt)
+        self.assertIn("测试问题", retry_prompt)
+        self.assertNotIn("市场概况", retry_prompt)
         self.assertNotIn('"hypotheses"', retry_prompt)
 
 

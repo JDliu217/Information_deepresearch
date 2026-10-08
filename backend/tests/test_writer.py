@@ -177,12 +177,15 @@ class WriterAgentTests(unittest.TestCase):
         self.assertIn("相关事实", section_prompt)
         self.assertIn("500-1000 字", section_prompt)
         self.assertIn("可点击链接格式", section_prompt)
-        self.assertIn("顶级的行业研究分析师", system_prompt)
+        self.assertIn("资深研究分析师", system_prompt)
+        self.assertNotIn("AI芯片", section_prompt)
+        self.assertNotIn("市场概况", section_prompt)
 
         report_payload, _, synthesis_prompt = client.prompts[-1]
         self.assertEqual(report_payload["mode"], "report")
         self.assertIn("使用层级编号", synthesis_prompt)
         self.assertIn("参考文献列表", synthesis_prompt)
+        self.assertNotIn("AI芯片", synthesis_prompt)
 
     def test_writer_falls_back_to_drafted_sections_when_synthesis_json_is_incomplete(self):
         class IncompleteSynthesisClient(MockLLMClient):
