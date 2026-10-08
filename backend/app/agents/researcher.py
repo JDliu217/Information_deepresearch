@@ -61,6 +61,7 @@ class ResearcherAgent(BaseAgent):
         progress_callback: Callable[[dict[str, Any]], None] | None = None,
     ) -> ResearchState:
         """搜索章节查询，并把来源与章节关联后写入共享状态。"""
+        analysis_batch_id = uuid4().hex
         if supplementary is None:
             supplementary = bool(state.pending_search_queries)
         if supplementary:
@@ -271,6 +272,11 @@ class ResearcherAgent(BaseAgent):
                     if supplementary
                     else "normal"
                 )
+                source["analysis_batch_id"] = analysis_batch_id
+                # SearchClient results should preserve their query, but the
+                # task is authoritative if a provider returns a stale/missing
+                # query value.
+                source["query"] = task["query"]
                 if task.get("search_type"):
                     source["search_type"] = task["search_type"]
                 if task["section_ids"]:
@@ -445,14 +451,18 @@ class ResearcherAgent(BaseAgent):
         analysis even though the displayed reference list is URL-deduplicated.
         Normal section searches can still share one source across sections.
         """
-        unique: dict[tuple[str, str, str], dict] = {}
+        unique: dict[tuple[str, str, str, str, str], dict] = {}
         for source in sources:
             url = str(source.get("url", "")).strip()
             if not url:
                 continue
             mode = str(source.get("analysis_mode", "normal")).strip() or "normal"
             query = str(source.get("query", "")).strip() if mode != "normal" else ""
-            key = (url, mode, query)
+            search_type = str(source.get("search_type", "web")).strip() or "web"
+            batch_id = str(source.get("analysis_batch_id", "")).strip()
+            if mode == "normal":
+                batch_id = ""
+            key = (url, mode, query, search_type, batch_id)
             if key not in unique:
                 unique[key] = source
                 continue

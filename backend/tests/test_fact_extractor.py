@@ -861,6 +861,46 @@ class FactExtractorAgentTests(unittest.TestCase):
         self.assertEqual(state.data_points, [])
         self.assertNotIn("旧普通来源", " ".join(call["user_prompt"] for call in client.calls))
 
+    def test_supplementary_research_reanalyzes_a_later_batch_with_same_query_and_url(self):
+        client = ModeAnalysisFactClient()
+        state = ResearchState("原始研究问题")
+        first_source = {
+            "title": "同一来源",
+            "url": "https://example.com/shared",
+            "source": "测试站点",
+            "summary": "第一次补充摘要",
+            "query": "补充查询",
+            "section_id": "sec-1",
+            "section_title": "研究章节",
+            "search_type": "follow_up",
+            "analysis_mode": "supplementary",
+            "analysis_batch_id": "batch-1",
+        }
+        state.raw_sources = [first_source]
+
+        async def run_batches():
+            extractor = FactExtractorAgent(client)
+            await extractor.run(state, mode="supplementary")
+            second_source = {
+                key: value
+                for key, value in first_source.items()
+                if key != "fact_extracted_sections"
+            }
+            state.raw_sources.append(
+                {
+                    **second_source,
+                    "summary": "第二次补充摘要",
+                    "analysis_batch_id": "batch-2",
+                }
+            )
+            await extractor.run(state, mode="supplementary")
+
+        asyncio.run(run_batches())
+
+        self.assertEqual(len(client.calls), 2)
+        self.assertIn("第一次补充摘要", client.calls[0]["user_prompt"])
+        self.assertIn("第二次补充摘要", client.calls[1]["user_prompt"])
+
     def test_recursive_mode_uses_reference_prompt_and_maps_recursive_outputs(self):
         client = ModeAnalysisFactClient()
         state = ResearchState("原始研究问题")

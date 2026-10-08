@@ -307,6 +307,34 @@ class ResearcherAgentTests(unittest.TestCase):
         )
         self.assertEqual(len(state.references), 1)
 
+    def test_researcher_preserves_same_query_url_from_a_later_analysis_batch(self):
+        class SameUrlSearch(SearchClient):
+            async def search(self, query, limit=3):
+                return [SearchResult("同一来源", "https://example.com/shared", "摘要", "")]
+
+        async def run():
+            state = ResearchState("测试问题")
+            search = SameUrlSearch()
+            researcher = ResearcherAgent(search)
+            state.pending_search_queries = ["补充查询"]
+            await researcher.run(state, supplementary=True)
+            first_batch = state.raw_sources[0]["analysis_batch_id"]
+            state.pending_search_queries = ["补充查询"]
+            await researcher.run(state, supplementary=True)
+            return state, first_batch
+
+        state, first_batch = asyncio.run(run())
+
+        self.assertEqual(len(state.raw_sources), 2)
+        self.assertEqual(state.raw_sources[0]["query"], "补充查询")
+        self.assertEqual(state.raw_sources[1]["query"], "补充查询")
+        self.assertNotEqual(
+            state.raw_sources[0]["analysis_batch_id"],
+            state.raw_sources[1]["analysis_batch_id"],
+        )
+        self.assertEqual(state.raw_sources[0]["analysis_batch_id"], first_batch)
+        self.assertEqual(len(state.references), 1)
+
     def test_researcher_rejects_missing_questions(self):
         state = ResearchState("还没有规划的问题")
 
