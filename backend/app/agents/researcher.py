@@ -222,6 +222,13 @@ class ResearcherAgent(BaseAgent):
                 source.setdefault("summary", source.get("snippet", ""))
                 source.setdefault("source", "")
                 source.setdefault("date", "")
+                source["analysis_mode"] = (
+                    "recursive"
+                    if supplementary and recursive
+                    else "supplementary"
+                    if supplementary
+                    else "normal"
+                )
                 if task.get("search_type"):
                     source["search_type"] = task["search_type"]
                 if task["section_ids"]:

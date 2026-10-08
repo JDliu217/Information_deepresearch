@@ -55,6 +55,9 @@ class ResearcherAgentTests(unittest.TestCase):
             [source["section_id"] for source in state.raw_sources],
             ["sec-1", "sec-2", "sec-3"],
         )
+        self.assertTrue(
+            all(source["analysis_mode"] == "normal" for source in state.raw_sources)
+        )
 
     def test_researcher_limits_normal_run_to_three_pending_sections_and_ten_results(self):
         class CapturingSearch(SearchClient):
@@ -111,12 +114,15 @@ class ResearcherAgentTests(unittest.TestCase):
             search = CapturingSearch()
             state = ResearchState("测试问题")
             state.pending_search_queries = [f"补充查询 {index}" for index in range(8)]
-            await ResearcherAgent(search).run(state)
-            return search
+            await ResearcherAgent(search).run(state, supplementary=True)
+            return state, search
 
-        search = asyncio.run(run())
+        state, search = asyncio.run(run())
         self.assertEqual(len(search.calls), 5)
         self.assertTrue(all(limit == 8 for _, limit in search.calls))
+        self.assertTrue(
+            all(source["analysis_mode"] == "supplementary" for source in state.raw_sources)
+        )
 
     def test_researcher_limits_recursive_queries_by_reference_type(self):
         class CapturingSearch(SearchClient):
@@ -144,6 +150,9 @@ class ResearcherAgentTests(unittest.TestCase):
             ["追溯 0", "追溯 1", "线索 0", "线索 1"],
         )
         self.assertTrue(all(limit == 6 for _, limit in search.calls))
+        self.assertTrue(
+            all(source["analysis_mode"] == "recursive" for source in state.raw_sources)
+        )
     def test_researcher_collects_sources_after_planning(self):
         async def run_chain():
             state = ResearchState("中国新能源汽车行业的发展趋势是什么？")

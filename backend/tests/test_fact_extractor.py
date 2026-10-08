@@ -193,6 +193,65 @@ class RepairingFactClient(LLMClient):
         return ""
 
 
+class ModeAnalysisFactClient(LLMClient):
+    def __init__(self):
+        self.calls = []
+
+    async def complete_json(
+        self,
+        role,
+        payload,
+        system_prompt="",
+        user_prompt="",
+        temperature=None,
+        max_tokens=None,
+    ):
+        self.calls.append(
+            {
+                "role": role,
+                "payload": payload,
+                "system_prompt": system_prompt,
+                "user_prompt": user_prompt,
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+            }
+        )
+        source = payload["sources"][0]
+        query = payload.get("search_query", payload.get("query", "normal"))
+        marker = "1002" if "二" in query or "线索" in query else "1001"
+        fact = {
+            "content": f"针对 {query} 的第 {marker} 项可引用事实。",
+            "source_name": source.get("source", "来源"),
+            "source_url": source["url"],
+            "credibility_score": 0.8,
+            "data_points": [
+                {"name": "事实内嵌指标", "value": "5", "unit": "个", "year": 2024}
+            ],
+        }
+        if payload["mode"] == "supplementary_search":
+            return {
+                "extracted_facts": [fact],
+                "key_findings": "补充发现",
+                "data_points": [{"name": "不应回写", "value": 99}],
+            }
+        if payload["mode"] == "deep_search":
+            fact.pop("data_points")
+            fact["related_hypothesis"] = "h-1"
+            fact["hypothesis_support"] = "supports"
+            return {
+                "extracted_facts": [fact],
+                "data_points": [
+                    {"name": f"递归指标 {query}", "value": 10, "unit": "项", "year": 2024}
+                ],
+                "further_tracing_queries": [f"继续追溯 {query}"],
+                "source_reliability": "来源可追溯",
+            }
+        return {"extracted_facts": [fact]}
+
+    async def complete_text(self, role, payload, system_prompt="", user_prompt=""):
+        return ""
+
+
 class FactExtractorAgentTests(unittest.TestCase):
     def test_fact_extractor_analyzes_three_sections_concurrently_in_stable_order(self):
         class ConcurrentClient(LLMClient):
@@ -747,6 +806,127 @@ class FactExtractorAgentTests(unittest.TestCase):
         self.assertEqual(state.data_points, [])
         self.assertTrue(
             any(log.get("warning") == "ignored_invalid_optional_fields" for log in state.logs)
+        )
+
+    def test_supplementary_mode_uses_reference_prompt_per_query_and_only_adds_facts(self):
+        client = ModeAnalysisFactClient()
+        state = ResearchState("原始研究问题")
+        state.raw_sources = [
+            {
+                "title": "旧普通来源",
+                "url": "https://example.com/old",
+                "summary": "旧摘要",
+                "query": "旧普通查询",
+                "section_id": "sec-1",
+                "analysis_mode": "normal",
+            }
+        ]
+        for query in ("补充查询一", "补充查询二"):
+            for index in range(9):
+                state.raw_sources.append(
+                    {
+                        "title": f"{query} 来源 {index}",
+                        "url": f"https://example.com/{query}/{index}",
+                        "source": "测试站点",
+                        "summary": "S" * 400,
+                        "query": query,
+                        "section_id": "sec-1",
+                        "section_title": "研究章节",
+                        "search_type": "follow_up",
+                        "analysis_mode": "supplementary",
+                    }
+                )
+
+        asyncio.run(FactExtractorAgent(client).run(state, mode="supplementary"))
+
+        self.assertEqual(len(client.calls), 2)
+        self.assertEqual(
+            [call["payload"]["search_query"] for call in client.calls],
+            ["补充查询一", "补充查询二"],
+        )
+        self.assertTrue(all(len(call["payload"]["sources"]) == 8 for call in client.calls))
+        self.assertTrue(
+            all(call["system_prompt"] == FactExtractorAgent.SUPPLEMENTARY_ANALYSIS_SYSTEM for call in client.calls)
+        )
+        self.assertTrue(all(call["temperature"] == 0.2 for call in client.calls))
+        first_prompt = client.calls[0]["user_prompt"]
+        self.assertIn("原始研究问题", first_prompt)
+        self.assertIn("补充查询一", first_prompt)
+        self.assertIn("补充查询一 来源 7", first_prompt)
+        self.assertNotIn("补充查询一 来源 8", first_prompt)
+        self.assertNotIn("S" * 301, first_prompt)
+        self.assertEqual(len(state.facts), 2)
+        self.assertTrue(all("data_points" not in fact for fact in state.facts))
+        self.assertEqual(state.data_points, [])
+        self.assertNotIn("旧普通来源", " ".join(call["user_prompt"] for call in client.calls))
+
+    def test_recursive_mode_uses_reference_prompt_and_maps_recursive_outputs(self):
+        client = ModeAnalysisFactClient()
+        state = ResearchState("原始研究问题")
+        state.hypotheses = [
+            {
+                "id": f"h-{index}",
+                "content": f"假设 {index}",
+                "status": "unverified",
+                "evidence_for": [],
+                "evidence_against": [],
+            }
+            for index in range(1, 5)
+        ]
+        for query, search_type in (
+            ("追溯查询", "source_tracing"),
+            ("线索查询", "follow_up"),
+        ):
+            for index in range(7):
+                state.raw_sources.append(
+                    {
+                        "title": f"{query} 来源 {index}",
+                        "url": f"https://example.com/{query}/{index}",
+                        "source": "测试站点",
+                        "summary": "R" * 400,
+                        "query": query,
+                        "section_id": "sec-1",
+                        "section_title": "研究章节",
+                        "search_type": search_type,
+                        "analysis_mode": "recursive",
+                    }
+                )
+
+        asyncio.run(FactExtractorAgent(client).run(state, mode="recursive"))
+
+        self.assertEqual(len(client.calls), 2)
+        self.assertEqual(
+            [call["payload"]["search_query"] for call in client.calls],
+            ["追溯查询", "线索查询"],
+        )
+        self.assertTrue(all(len(call["payload"]["sources"]) == 6 for call in client.calls))
+        self.assertTrue(
+            all(call["system_prompt"] == FactExtractorAgent.DEEP_SEARCH_ANALYSIS_SYSTEM for call in client.calls)
+        )
+        self.assertTrue(all(call["temperature"] == 0.2 for call in client.calls))
+        tracing_prompt, follow_up_prompt = [call["user_prompt"] for call in client.calls]
+        self.assertIn("追溯原始数据源", tracing_prompt)
+        self.assertIn("追踪相关线索", follow_up_prompt)
+        self.assertIn("假设 3", tracing_prompt)
+        self.assertNotIn("假设 4", tracing_prompt)
+        self.assertIn("追溯查询 来源 5", tracing_prompt)
+        self.assertNotIn("追溯查询 来源 6", tracing_prompt)
+        self.assertNotIn("R" * 301, tracing_prompt)
+
+        self.assertEqual(len(state.facts), 2)
+        self.assertEqual(len(state.data_points), 2)
+        self.assertEqual(state.hypotheses[0]["status"], "supported")
+        self.assertEqual(len(state.hypotheses[0]["evidence_for"]), 2)
+        self.assertEqual(
+            state.pending_search_queries,
+            ["继续追溯 追溯查询", "继续追溯 线索查询"],
+        )
+        self.assertEqual(
+            [
+                state.pending_search_contexts[query][0]["search_type"]
+                for query in state.pending_search_queries
+            ],
+            ["source_tracing", "follow_up"],
         )
 
 
