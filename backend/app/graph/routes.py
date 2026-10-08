@@ -17,6 +17,13 @@ def select_research_batch_route(graph_state: ResearchGraphState) -> str:
     """Continue initial search until every planned section has been researched."""
 
     state = graph_state["research_state"]
+    # Critic queries belong to the reference supplementary pass. They must go
+    # directly to the search node with ``recursive=False``; otherwise the
+    # nonzero depth left by an earlier recursive pass would make them use the
+    # deep-search prompt accidentally.
+    if graph_state.get("critic_supplementary", False):
+        return "search" if state.pending_search_queries else "write"
+
     # FactExtractor queues source-tracing and follow-up queries. Execute those
     # recursive searches before moving to another outline batch, matching the
     # reference DeepScout flow where each section is deepened immediately.
@@ -46,6 +53,7 @@ def prepare_review_route(graph_state: ResearchGraphState) -> dict[str, Any]:
             "research_state": state,
             "route": "stop",
             "supplementary": False,
+            "critic_supplementary": False,
             "revision": False,
         }
 
@@ -66,6 +74,7 @@ def prepare_review_route(graph_state: ResearchGraphState) -> dict[str, Any]:
             "research_state": state,
             "route": "research",
             "supplementary": True,
+            "critic_supplementary": True,
             "revision": True,
             # A Critic initiated research round is independent of the
             # FactExtractor recursion budget.
@@ -76,6 +85,7 @@ def prepare_review_route(graph_state: ResearchGraphState) -> dict[str, Any]:
         "research_state": state,
         "route": "revise",
         "supplementary": False,
+        "critic_supplementary": False,
         "revision": True,
     }
 

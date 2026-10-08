@@ -164,6 +164,26 @@ class GraphRouteTests(unittest.TestCase):
             "follow_up",
         )
 
+    def test_critic_supplementary_returns_to_writer_after_recursive_queries(self):
+        from app.graph.routes import select_research_batch_route
+
+        state = ResearchState("测试问题", max_iterations=2)
+        state.outline = [{"id": "sec-1", "status": "researching"}]
+        graph_state = {
+            **initial_graph_state(state),
+            "critic_supplementary": True,
+            "supplementary": True,
+            "revision": True,
+        }
+
+        self.assertEqual(select_research_batch_route(graph_state), "write")
+
+        # Critic queries use the supplementary prompt even when a previous
+        # recursive round left a nonzero depth in graph state.
+        state.pending_search_queries = ["追溯来源"]
+        graph_state["research_depth"] = 1
+        self.assertEqual(select_research_batch_route(graph_state), "search")
+
     def test_critic_research_round_resets_recursive_search_depth(self):
         state = ResearchState("测试问题", max_iterations=2)
         state.iteration = 0
@@ -231,6 +251,14 @@ class GraphRouteTests(unittest.TestCase):
         self.assertEqual(len(evidence_events), 2)
         self.assertTrue(evidence_events[-1]["supplementary"])
         self.assertEqual(evidence_events[-1]["iteration"], 1)
+        self.assertEqual(
+            sum(event["type"] == "analysis_ready" for event in result["events"]),
+            1,
+        )
+        draft_events = [
+            event for event in result["events"] if event["type"] == "draft_ready"
+        ]
+        self.assertTrue(draft_events[-1]["revision"])
 
     def test_max_iterations_counts_rework_rounds_like_reference_graph(self):
         for max_iterations in (0, 1, 2):

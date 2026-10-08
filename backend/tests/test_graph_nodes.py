@@ -74,6 +74,49 @@ class GraphNodeTests(unittest.TestCase):
         self.assertFalse(result["supplementary"])
         self.assertTrue(result["events"][0]["supplementary"])
 
+    def test_extract_facts_passes_reference_analysis_mode_to_agent(self):
+        class RecordingFactExtractor:
+            name = "FactExtractorAgent"
+
+            def __init__(self):
+                self.modes = []
+
+            async def run(self, state, *, mode):
+                self.modes.append(mode)
+                return state
+
+        recorder = RecordingFactExtractor()
+        nodes = ResearchGraphNodes(
+            planner=self.nodes.planner,
+            researcher=self.nodes.researcher,
+            fact_extractor=recorder,
+            data_analyst=self.nodes.data_analyst,
+            code_wizard=self.nodes.code_wizard,
+            writer=self.nodes.writer,
+            critic=self.nodes.critic,
+        )
+        cases = [
+            ({}, "normal"),
+            ({"supplementary": True}, "supplementary"),
+            ({"supplementary": True, "research_depth": 1}, "recursive"),
+            # Depth remains in graph state after a recursive round. A later
+            # planned section is normal research once the supplementary flag
+            # has been consumed.
+            ({"supplementary": False, "research_depth": 1}, "normal"),
+        ]
+
+        for graph_fields, _expected in cases:
+            asyncio.run(
+                nodes.extract_facts(
+                    {
+                        **initial_graph_state(ResearchState("测试问题")),
+                        **graph_fields,
+                    }
+                )
+            )
+
+        self.assertEqual([mode for _, mode in cases], recorder.modes)
+
 
 if __name__ == "__main__":
     unittest.main()

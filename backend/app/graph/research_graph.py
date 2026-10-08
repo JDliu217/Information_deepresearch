@@ -47,6 +47,7 @@ def build_research_graph(nodes: ResearchGraphNodes, *, checkpointer=None):
             "search": "research_started",
             "follow_up": "prepare_follow_up_research",
             "analyze": "analysis_started",
+            "write": "writing_started",
         },
     )
     graph.add_edge("prepare_follow_up_research", "research_started")

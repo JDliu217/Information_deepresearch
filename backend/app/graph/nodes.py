@@ -107,7 +107,13 @@ class ResearchGraphNodes:
     async def extract_facts(self, graph_state: ResearchGraphState) -> dict[str, Any]:
         state = deepcopy(graph_state["research_state"])
         supplementary = bool(graph_state.get("supplementary", False))
-        await self.fact_extractor.run(state)
+        if supplementary and int(graph_state.get("research_depth", 0)) > 0:
+            extraction_mode = "recursive"
+        elif supplementary:
+            extraction_mode = "supplementary"
+        else:
+            extraction_mode = "normal"
+        await self.fact_extractor.run(state, mode=extraction_mode)
         return {
             "research_state": state,
             # The current extraction pass has consumed the supplementary
