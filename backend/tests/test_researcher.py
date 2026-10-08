@@ -206,6 +206,39 @@ class ResearcherAgentTests(unittest.TestCase):
         self.assertEqual(len(state.raw_sources), 1)
         self.assertEqual(len(state.references), 1)
 
+    def test_researcher_preserves_same_url_across_supplementary_queries(self):
+        class SameUrlSearch(SearchClient):
+            async def search(self, query, limit=3):
+                return [SearchResult("同一来源", "https://example.com/shared", query, query)]
+
+        async def run():
+            state = ResearchState("测试问题")
+            state.raw_sources = [
+                {
+                    "title": "已有普通来源",
+                    "url": "https://example.com/shared",
+                    "summary": "普通搜索结果",
+                    "query": "普通查询",
+                    "analysis_mode": "normal",
+                }
+            ]
+            state.pending_search_queries = ["补充查询一", "补充查询二"]
+            await ResearcherAgent(SameUrlSearch()).run(state, supplementary=True)
+            return state
+
+        state = asyncio.run(run())
+
+        self.assertEqual(len(state.raw_sources), 3)
+        self.assertEqual(
+            [(source["analysis_mode"], source["query"]) for source in state.raw_sources],
+            [
+                ("normal", "普通查询"),
+                ("supplementary", "补充查询一"),
+                ("supplementary", "补充查询二"),
+            ],
+        )
+        self.assertEqual(len(state.references), 1)
+
     def test_researcher_rejects_missing_questions(self):
         state = ResearchState("还没有规划的问题")
 

@@ -284,16 +284,18 @@ class ResearcherAgent(BaseAgent):
                 collected_sources.extend(section_batch)
 
         state.raw_sources = self._deduplicate_sources(collected_sources)
-        state.references = [
-            {
-                "title": source["title"],
-                "url": source["url"],
-                    "source": source.get("source", ""),
-                    "date": source.get("date", ""),
+        references_by_url: dict[str, dict[str, str]] = {}
+        for source in state.raw_sources:
+            url = str(source.get("url", "")).strip()
+            if not url or url in references_by_url:
+                continue
+            references_by_url[url] = {
+                "title": str(source.get("title", "")),
+                "url": url,
+                "source": str(source.get("source", "")),
+                "date": str(source.get("date", "")),
             }
-            for source in state.raw_sources
-            if source.get("url")
-        ]
+        state.references = list(references_by_url.values())
         if supplementary:
             state.pending_search_queries = []
             state.pending_search_contexts = {}
@@ -394,16 +396,25 @@ class ResearcherAgent(BaseAgent):
 
     @staticmethod
     def _deduplicate_sources(sources: list[dict]) -> list[dict]:
-        """按 URL 去重，同时保留第一次出现的顺序。"""
-        unique: dict[str, dict] = {}
+        """Deduplicate within an analysis batch, preserving query provenance.
+
+        DeepScout analyzes each supplementary/deep-search query separately.
+        A URL seen in another mode or query must remain available to that
+        analysis even though the displayed reference list is URL-deduplicated.
+        Normal section searches can still share one source across sections.
+        """
+        unique: dict[tuple[str, str, str], dict] = {}
         for source in sources:
             url = str(source.get("url", "")).strip()
             if not url:
                 continue
-            if url not in unique:
-                unique[url] = source
+            mode = str(source.get("analysis_mode", "normal")).strip() or "normal"
+            query = str(source.get("query", "")).strip() if mode != "normal" else ""
+            key = (url, mode, query)
+            if key not in unique:
+                unique[key] = source
                 continue
-            retained = unique[url]
+            retained = unique[key]
             section_ids = retained.setdefault(
                 "section_ids",
                 [retained["section_id"]] if retained.get("section_id") else [],

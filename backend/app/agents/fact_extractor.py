@@ -355,6 +355,9 @@ URL: {url}
                     # its prompt's data_points/key_findings are not merged.
                     for fact in facts:
                         fact.pop("data_points", None)
+                        fact.pop("section_id", None)
+                        fact.pop("section_title", None)
+                        fact["related_sections"] = []
                     all_facts.extend(facts)
                 elif group["mode"] == "recursive":
                     all_facts.extend(facts)

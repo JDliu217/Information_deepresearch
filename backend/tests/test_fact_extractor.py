@@ -857,6 +857,7 @@ class FactExtractorAgentTests(unittest.TestCase):
         self.assertNotIn("S" * 301, first_prompt)
         self.assertEqual(len(state.facts), 2)
         self.assertTrue(all("data_points" not in fact for fact in state.facts))
+        self.assertTrue(all(fact["related_sections"] == [] for fact in state.facts))
         self.assertEqual(state.data_points, [])
         self.assertNotIn("旧普通来源", " ".join(call["user_prompt"] for call in client.calls))
 
