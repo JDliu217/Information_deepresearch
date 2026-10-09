@@ -31,6 +31,13 @@ def build_default_runtime(
             allowed_msgpack_modules=[("app.domain.state", "ResearchState")]
         )
     )
+    return create_research_runtime(
+        MockLLMClient(),
+        MockSearchClient(),
+        run_control=control,
+        repository=repository,
+        checkpointer=saver,
+    )
 
 
 def build_configured_runtime(
@@ -44,13 +51,6 @@ def build_configured_runtime(
         run_control=run_control,
         repository=repository,
         checkpointer=checkpointer,
-    )
-    return create_research_runtime(
-        MockLLMClient(),
-        MockSearchClient(),
-        run_control=control,
-        repository=repository,
-        checkpointer=saver,
     )
 
 

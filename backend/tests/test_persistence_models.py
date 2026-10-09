@@ -18,6 +18,8 @@ class PersistenceModelTests(unittest.TestCase):
 
         self.assertEqual(tables, {"research_runs", "research_events"})
         self.assertIsNotNone(ResearchRunRecord.__table__.c.state_data)
+        self.assertIsNotNone(ResearchRunRecord.__table__.c.status)
+        self.assertIsNotNone(ResearchRunRecord.__table__.c.error)
         self.assertIsNotNone(ResearchEventRecord.__table__.c.data)
 
     def test_state_serializes_all_domain_fields(self):

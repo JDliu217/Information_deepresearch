@@ -25,7 +25,7 @@ class ResearchState:
 
     # 审核循环次数
     iteration: int = 0
-    max_iterations: int = 1
+    max_iterations: int = 3
 
     # 规划结果
     # V2 章节大纲。后续 Planner 会逐步使用 domain.models.Section。
@@ -39,6 +39,9 @@ class ResearchState:
     )
     pending_search_queries: list[str] = field(default_factory=list)
     pending_search_contexts: dict[str, list[dict[str, str]]] = field(default_factory=dict)
+    # Planner 的结构化响应、逐次校验结论和耗时，用于复盘规划失败。
+    # 仅存储有大小限制且已脱敏的 LLM 响应文本，不包含请求凭证。
+    planner_diagnostics: list[dict[str, Any]] = field(default_factory=list)
 
     # 研究证据
     # 原始搜索结果；事实提取和后续分析都从这里读取。
@@ -55,6 +58,8 @@ class ResearchState:
     code_executions: list[dict[str, Any]] = field(default_factory=list)
     review_result: dict[str, Any] = field(default_factory=dict)
     critic_feedback: list[dict[str, Any]] = field(default_factory=list)
+    # 每轮保留 Critic 的原始评分和问题变化，用于判断修订是否真的改善报告。
+    review_history: list[dict[str, Any]] = field(default_factory=list)
     unresolved_issues: int = 0
     quality_score: float = 0.0
 

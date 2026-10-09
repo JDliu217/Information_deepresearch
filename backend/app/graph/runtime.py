@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Any
@@ -31,12 +32,15 @@ from .research_graph import build_research_graph
 from .state import initial_graph_state
 
 
+logger = logging.getLogger(__name__)
+
+
 @dataclass(frozen=True)
 class ResearchGraphRuntime:
     """一次 LangGraph 运行所需的已编译图和配置。"""
 
     graph: Any
-    max_iterations: int = 1
+    max_iterations: int = 3
     repository: ResearchRepository | None = None
     run_control: RunControlStore | None = None
 
@@ -55,11 +59,11 @@ class ResearchGraphRuntime:
         return await self._run_state(state, resume=True)
 
     async def _run_state(self, state: ResearchState, *, resume: bool) -> ResearchState:
-        self._start_run(state)
-        if self.repository is not None:
-            self.repository.save_state(state)
         latest_state = state
         try:
+            self._start_run(state)
+            if self.repository is not None:
+                self.repository.save_state(state, status="running", error=None)
             async for node_update in self._stream_updates(state, resume=resume):
                 latest_state = self._persist_update(node_update, latest_state)
                 self._update_run_status(latest_state, node_update.get("events", []))
@@ -75,6 +79,9 @@ class ResearchGraphRuntime:
             self._mark_completed(latest_state)
             return latest_state
         except Exception as exc:
+            failure_state = getattr(exc, "research_state", latest_state)
+            if isinstance(failure_state, ResearchState):
+                latest_state = failure_state
             self._mark_failed(latest_state, exc)
             raise
 
@@ -100,10 +107,10 @@ class ResearchGraphRuntime:
         *,
         resume: bool,
     ) -> AsyncIterator[dict[str, Any]]:
-        self._start_run(state)
-        if self.repository is not None:
-            self.repository.save_state(state)
         try:
+            self._start_run(state)
+            if self.repository is not None:
+                self.repository.save_state(state, status="running", error=None)
             async for node_update in self._stream_updates(state, resume=resume):
                 state = self._persist_update(node_update, state)
                 events = node_update.get("events", [])
@@ -126,6 +133,9 @@ class ResearchGraphRuntime:
                     return
             self._mark_completed(state)
         except Exception as exc:
+            failure_state = getattr(exc, "research_state", state)
+            if isinstance(failure_state, ResearchState):
+                state = failure_state
             self._mark_failed(state, exc)
             raise
 
@@ -269,6 +279,8 @@ class ResearchGraphRuntime:
             )
 
     def _mark_completed(self, state: ResearchState) -> None:
+        if self.repository is not None:
+            self.repository.save_state(state, status="completed", error=None)
         if self.run_control is not None:
             self.run_control.mark_completed(
                 state.session_id,
@@ -277,6 +289,17 @@ class ResearchGraphRuntime:
             )
 
     def _mark_cancelled(self, state: ResearchState) -> None:
+        if self.repository is not None:
+            self.repository.save_state(state, status="cancelled", error=None)
+            self.repository.append_event(
+                {
+                    "type": "research_cancelled",
+                    "session_id": state.session_id,
+                    "phase": state.phase,
+                    "iteration": state.iteration,
+                    "reason": "cancelled at graph node boundary",
+                }
+            )
         if self.run_control is not None:
             self.run_control.mark_cancelled(
                 state.session_id,
@@ -292,6 +315,32 @@ class ResearchGraphRuntime:
                 iteration=state.iteration,
                 error=str(error),
             )
+        if self.repository is not None:
+            try:
+                self.repository.save_state(
+                    state,
+                    status="failed",
+                    error=str(error),
+                )
+                self.repository.append_event(
+                    {
+                        "type": "research_failed",
+                        "session_id": state.session_id,
+                        "phase": state.phase,
+                        "iteration": state.iteration,
+                        "error": str(error),
+                        **(
+                            {"planner_diagnostics": error.diagnostics}
+                            if isinstance(getattr(error, "diagnostics", None), list)
+                            else {}
+                        ),
+                    }
+                )
+            except Exception:
+                logger.exception(
+                    "Failed to persist failure details for research session %s",
+                    state.session_id,
+                )
 
     async def _restore_checkpoint_after_cancel(
         self,
@@ -333,7 +382,7 @@ def create_research_runtime(
     search: SearchClient,
     *,
     results_per_question: int = 10,
-    max_iterations: int = 1,
+    max_iterations: int = 3,
     repository: ResearchRepository | None = None,
     run_control: RunControlStore | None = None,
     checkpointer: Any | None = None,

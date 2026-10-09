@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 import uuid
 from typing import Any
+from urllib.parse import urlparse
 
 from app.core.llm_client import LLMClient
 from app.domain.models import CriticFeedback, FactCheckResult, ReviewResult
@@ -17,6 +18,9 @@ class CriticAgent(BaseAgent):
     """检查报告是否有事实、来源和基本的可发布条件。"""
 
     name = "critic"
+    MAX_REVIEW_REPORT_CHARS = 24000
+    MAX_REVIEW_FACTS = 20
+    MAX_REVIEW_SOURCES = 30
     REVIEW_SYSTEM = "你是一位极其严苛的质量审核专家，专门找出研究报告中的问题。你永远不会轻易满意。"
     REVIEW_PROMPT = r"""你是一位极其严苛的学术审稿人和事实核查专家。你的任务是找出研究报告中的所有问题。
 
@@ -26,6 +30,8 @@ class CriticAgent(BaseAgent):
 3. **偏见警惕**：单方面观点、情绪化表达都是问题
 4. **时效性**：过时的数据（超过2年）必须标注
 5. **完整性**：是否遗漏重要方面
+6. 站点首页或栏目页不能单独证明具体数字、公告或文章
+7. 同一指标、期间和单位出现不同数值时，应指出冲突并核对统计口径
 
 ## 研究问题
 {query}
@@ -44,8 +50,15 @@ class CriticAgent(BaseAgent):
 ### 使用的数据点
 {data_points}
 
+### 可核验来源
+{sources}
+
+### 上一轮待复核问题
+{previous_issues}
+
 ## 任务
 逐条审核上述内容，找出所有问题。你必须扮演一个"找茬专家"的角色。
+逐一复核上一轮问题：只有报告已提供可核验证据或实质修正时才列为已解决。Writer 自称已处理不代表已解决；请保留上一轮问题 ID。
 
 ## 输出格式
 ```json
@@ -69,6 +82,8 @@ class CriticAgent(BaseAgent):
             "search_query": "如果需要补充搜索，建议的关键词"
         }}
     ],
+    "resolved_issue_ids": ["上一轮已解决的问题ID"],
+    "unresolved_issue_ids": ["上一轮仍未解决的问题ID"],
     "fact_check_results": [
         {{
             "fact_id": "事实ID",
@@ -134,6 +149,11 @@ class CriticAgent(BaseAgent):
         if not state.final_report.strip():
             raise ValueError("没有可供审核的报告")
 
+        previous_open = {
+            str(issue.get("id")): issue
+            for issue in state.critic_feedback
+            if isinstance(issue, dict) and not issue.get("resolved") and issue.get("id")
+        }
         payload = self._build_review_context(state)
         result = await self._complete_json(
             payload,
@@ -144,30 +164,157 @@ class CriticAgent(BaseAgent):
                 draft_content=payload["draft_content"],
                 facts=payload["facts_text"],
                 data_points=payload["data_points_text"],
+                sources=payload["sources_text"],
+                previous_issues=payload["previous_issues_text"],
             ),
             temperature=0.2,
             max_tokens=16000,
         )
         review = self._validate_review(result, state)
         state.review_result = review
+        resolved_by_critic = self._issue_ids(result.get("resolved_issue_ids")) & set(previous_open)
+        unresolved_by_critic = self._issue_ids(result.get("unresolved_issue_ids")) & set(previous_open)
+        for issue_id, issue in previous_open.items():
+            if issue_id in resolved_by_critic and issue_id not in unresolved_by_critic:
+                issue["resolved"] = True
+                issue["resolved_iteration"] = state.iteration
+                issue["resolution_source"] = "critic_review"
+            elif issue_id in unresolved_by_critic:
+                issue["resolved"] = False
+                issue["last_seen_iteration"] = state.iteration
+
         new_feedback = []
+        found_existing: set[str] = set()
         for issue in review["structured_issues"]:
             issue = dict(issue)
+            key = self._issue_key(issue)
+            critic_issue_id = str(issue.get("id", "")).strip()
+            existing = next(
+                (
+                    prior
+                    for prior in state.critic_feedback
+                    if isinstance(prior, dict)
+                    and (
+                        str(prior.get("id", "")) == critic_issue_id
+                        or self._issue_key(prior) == key
+                        or (
+                            str(prior.get("critic_reported_id", "")) == critic_issue_id
+                            and str(prior.get("target_section") or "global").strip().lower()
+                            == key[0]
+                            and str(prior.get("issue_type") or "incomplete").strip().lower()
+                            == key[1]
+                        )
+                    )
+                    and str(prior.get("id")) not in found_existing
+                ),
+                None,
+            )
+            if existing is not None:
+                stable_id = existing.get("id")
+                existing.update(issue)
+                existing["id"] = stable_id
+                existing["critic_reported_id"] = critic_issue_id
+                existing["resolved"] = False
+                existing.pop("resolved_iteration", None)
+                existing.pop("resolution_source", None)
+                existing["last_seen_iteration"] = state.iteration
+                existing.setdefault("first_seen_iteration", state.iteration)
+                existing.setdefault("review_history", []).append(state.iteration)
+                found_existing.add(str(existing.get("id")))
+                new_feedback.append(existing)
+                continue
             issue["id"] = f"issue_{uuid.uuid4().hex[:8]}"
+            issue["critic_reported_id"] = critic_issue_id
             issue["resolved"] = False
+            issue["first_seen_iteration"] = state.iteration
+            issue["last_seen_iteration"] = state.iteration
+            issue["review_history"] = [state.iteration]
+            state.critic_feedback.append(issue)
             new_feedback.append(issue)
-        state.critic_feedback.extend(new_feedback)
+        active_feedback_ids = {str(issue.get("id")) for issue in new_feedback}
+        for issue_id, prior in previous_open.items():
+            if prior.get("resolved") or issue_id in active_feedback_ids:
+                continue
+            # Absence from the model's issue list is not evidence that an issue
+            # was fixed. Keep it active unless Critic explicitly resolved it.
+            prior["last_seen_iteration"] = state.iteration
+            new_feedback.append(prior)
         state.review_result["structured_issues"] = new_feedback
+        state.review_result["issues"] = [
+            str(issue.get("description", "")) for issue in new_feedback
+        ]
         state.unresolved_issues = len(
             [
                 issue
-                for issue in new_feedback
-                if issue.get("severity") in {"critical", "major"}
+                for issue in state.critic_feedback
+                if not issue.get("resolved")
+                and issue.get("severity") in {"critical", "major"}
             ]
         )
         state.quality_score = review["quality_score"]
+        resolved_ids = [
+            issue_id for issue_id, issue in previous_open.items() if issue.get("resolved")
+        ]
+        all_open_ids = [
+            str(issue.get("id"))
+            for issue in state.critic_feedback
+            if isinstance(issue, dict) and not issue.get("resolved") and issue.get("id")
+        ]
+        new_ids = [
+            issue["id"]
+            for issue in new_feedback
+            if issue["id"] not in previous_open
+        ]
+        history_entry = {
+            "iteration": state.iteration,
+            "quality_score": review["quality_score"],
+            "verdict": review["verdict"],
+            "review_issue_count": len(new_feedback),
+            "resolved_issue_ids": resolved_ids,
+            "unresolved_issue_ids": all_open_ids,
+            "new_issue_ids": new_ids,
+            "open_issue_count": sum(
+                not issue.get("resolved") for issue in state.critic_feedback
+            ),
+            "critic_resolved_issue_ids": sorted(resolved_by_critic),
+            "critic_unresolved_issue_ids": sorted(unresolved_by_critic),
+        }
+        state.review_history.append(history_entry)
+        state.review_result["issue_progress"] = history_entry
         state.phase = "reviewing"
         return state
+
+    @staticmethod
+    def _issue_ids(value: Any) -> set[str]:
+        ids: set[str] = set()
+        for item in CriticAgent._as_list(value):
+            issue_id = item.get("id", item.get("issue_id")) if isinstance(item, dict) else item
+            if isinstance(issue_id, str) and issue_id.strip():
+                ids.add(issue_id.strip())
+        return ids
+
+    @staticmethod
+    def _issue_key(issue: dict[str, Any]) -> tuple[str, str, str]:
+        return (
+            str(issue.get("target_section") or "global").strip().lower(),
+            str(issue.get("issue_type") or "incomplete").strip().lower(),
+            re.sub(r"\s+", "", str(issue.get("description") or "")).lower(),
+        )
+
+    @staticmethod
+    def _is_landing_page(value: Any) -> bool:
+        path = urlparse(str(value or "").strip()).path.strip("/").lower()
+        return path in {
+            "",
+            "index",
+            "index.html",
+            "index.htm",
+            "home",
+            "homepage",
+            "about",
+            "news",
+            "articles",
+        }
 
     async def final_check(self, state: ResearchState) -> dict[str, Any]:
         """对 Writer 修订后的报告做一次轻量最终检查。
@@ -229,7 +376,9 @@ class CriticAgent(BaseAgent):
                 or research_issue_count / max(total_critical_major, 1) > 0.3
             )
         )
-        unique_queries = list(set(queries))[:5]
+        # Keep Critic priority order stable so the bounded supplementary pass
+        # searches the same highest-priority issues on every run.
+        unique_queries = list(dict.fromkeys(queries))[:5]
 
         return {
             "action": "research" if should_research else "revise",
@@ -241,18 +390,44 @@ class CriticAgent(BaseAgent):
     def _build_review_context(state: ResearchState) -> dict[str, Any]:
         """组装参考 CriticMaster 使用的审核上下文。"""
 
-        draft_content = ""
-        for section_id, content in state.draft_sections.items():
-            section = next((item for item in state.outline if item.get("id") == section_id), {})
-            draft_content += f"\n## {section.get('title', section_id)}\n{content}\n"
+        # Review the deliverable the user will actually receive. Per-section
+        # drafts may be stale after Writer.revise updates final_report.
+        draft_content = state.final_report.strip()
         if not draft_content:
-            draft_content = state.final_report or "（暂无内容）"
+            for section_id, content in state.draft_sections.items():
+                section = next(
+                    (item for item in state.outline if item.get("id") == section_id),
+                    {},
+                )
+                draft_content += f"\n## {section.get('title', section_id)}\n{content}\n"
+        if not draft_content:
+            draft_content = "（暂无内容）"
+
+        recent_facts = [
+            fact
+            for fact in state.facts
+            if isinstance(fact.get("metadata"), dict)
+            and fact["metadata"].get("analysis_mode") == "supplementary"
+            and fact["metadata"].get("research_iteration") == state.iteration
+        ]
+        facts_for_review = []
+        seen_fact_ids: set[str] = set()
+        for fact in [*recent_facts, *state.facts]:
+            fact_id = str(fact.get("id", "")).strip()
+            if fact_id and fact_id in seen_fact_ids:
+                continue
+            if fact_id:
+                seen_fact_ids.add(fact_id)
+            facts_for_review.append(fact)
+            if len(facts_for_review) >= CriticAgent.MAX_REVIEW_FACTS:
+                break
 
         facts = "\n".join(
             f"- [{fact.get('id')}] {str(fact.get('content', ''))[:150]} "
             f"(来源: {fact.get('source_name') or fact.get('source_title')}, "
+            f"URL: {fact.get('source_url')}, "
             f"可信度: {fact.get('credibility_score', fact.get('confidence'))})"
-            for fact in state.facts[:20]
+            for fact in facts_for_review
         ) or "（暂无事实记录）"
         data_points = "\n".join(
             f"- {point.get('name')}: {point.get('value')} {point.get('unit', '')} "
@@ -263,6 +438,44 @@ class CriticAgent(BaseAgent):
             f"- {section.get('id')}: {section.get('title')} ({section.get('status', 'pending')})"
             for section in state.outline
         )
+        supplementary_sources = [
+            source
+            for source in state.raw_sources
+            if source.get("analysis_mode") in {"supplementary", "recursive"}
+        ][-20:]
+        source_candidates = [*supplementary_sources, *state.raw_sources[:10]]
+        if not supplementary_sources:
+            source_candidates = state.raw_sources[: CriticAgent.MAX_REVIEW_SOURCES]
+        sources_for_review = []
+        seen_source_urls: set[str] = set()
+        for source in source_candidates:
+            url = str(source.get("url", "")).strip()
+            if url and url in seen_source_urls:
+                continue
+            if url:
+                seen_source_urls.add(url)
+            sources_for_review.append(source)
+            if len(sources_for_review) >= CriticAgent.MAX_REVIEW_SOURCES:
+                break
+        sources_text = "\n".join(
+            f"- {source.get('title') or '未命名来源'} | "
+            f"来源: {source.get('source') or '未知'} | "
+            f"日期: {source.get('date') or '未知'} | URL: {source.get('url') or '未知'} | "
+            f"类型: {'站点首页/栏目页' if CriticAgent._is_landing_page(source.get('url')) else '搜索结果链接'}"
+            for source in sources_for_review
+        ) or "（暂无来源记录）"
+        previous_issues = [
+            issue
+            for issue in state.critic_feedback
+            if isinstance(issue, dict) and not issue.get("resolved")
+        ]
+        previous_issues_text = "\n".join(
+            f"- ID: {issue.get('id')} | [{issue.get('severity')}] "
+            f"{issue.get('issue_type')} | 位置: {issue.get('location') or issue.get('target_section')}\n"
+            f"  问题: {issue.get('description')}"
+            for issue in previous_issues
+        ) or "（首次审核，无待复核问题）"
+
         # The structured aliases keep the existing MockLLM and telemetry contracts.
         # The real model receives the reference prompt rendered from the *_text values.
         return {
@@ -276,8 +489,8 @@ class CriticAgent(BaseAgent):
                 for section in state.outline
             ],
             "outline_text": outline,
-            "draft_content": draft_content[:8000],
-            "report": state.final_report[:8000],
+            "draft_content": draft_content[: CriticAgent.MAX_REVIEW_REPORT_CHARS],
+            "report": state.final_report[: CriticAgent.MAX_REVIEW_REPORT_CHARS],
             "facts": [
                 {
                     "id": fact.get("id") or f"fact_{index}",
@@ -288,7 +501,7 @@ class CriticAgent(BaseAgent):
                         "credibility_score", fact.get("confidence", 0.0)
                     ),
                 }
-                for index, fact in enumerate(state.facts[:20], start=1)
+                for index, fact in enumerate(facts_for_review, start=1)
             ],
             "facts_text": facts,
             "sources": [
@@ -298,8 +511,11 @@ class CriticAgent(BaseAgent):
                     "source": source.get("source", ""),
                     "date": source.get("date", ""),
                 }
-                for source in state.raw_sources[:30]
+                for source in sources_for_review
             ],
+            "sources_text": sources_text,
+            "previous_issues": previous_issues,
+            "previous_issues_text": previous_issues_text,
             "data_points": state.data_points[:15],
             "data_points_text": data_points,
         }

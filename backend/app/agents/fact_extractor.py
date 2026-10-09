@@ -102,6 +102,7 @@ class FactExtractorAgent(BaseAgent):
 
 ## 任务
 从搜索结果中提取与"{search_query}"直接相关的关键事实和数据。
+每条事实的 source_url 必须逐字复制对应搜索结果中列出的 URL；不要猜测、改写或补造 URL。无法确认来源的事实不要输出。
 
 输出JSON格式：
 ```json
@@ -138,6 +139,7 @@ class FactExtractorAgent(BaseAgent):
 ## 任务
 1. 从搜索结果中提取关键事实和数据（特别关注官方来源和权威数据）
 2. 如果发现引用了其他权威来源，生成进一步追溯查询
+3. 每条事实的 source_url 必须逐字复制对应搜索结果中列出的 URL；不要猜测、改写或补造 URL。无法确认来源的事实不要输出。
 
 输出JSON格式：
 ```json
@@ -240,6 +242,7 @@ URL: {url}
         if not state.raw_sources:
             raise ValueError("没有可供事实提取的来源")
 
+        extraction_batch_id = uuid.uuid4().hex
         sections = self._sources_by_section(state.raw_sources, mode=mode)
         if not sections:
             state.phase = "researching"
@@ -358,8 +361,27 @@ URL: {url}
                         fact.pop("section_id", None)
                         fact.pop("section_title", None)
                         fact["related_sections"] = []
+                        metadata = fact.get("metadata")
+                        if not isinstance(metadata, dict):
+                            metadata = {}
+                        fact["metadata"] = {
+                            **metadata,
+                            "analysis_mode": "supplementary",
+                            "research_iteration": state.iteration,
+                            "search_query": group["query"],
+                        }
                     all_facts.extend(facts)
                 elif group["mode"] == "recursive":
+                    for fact in facts:
+                        metadata = fact.get("metadata")
+                        if not isinstance(metadata, dict):
+                            metadata = {}
+                        fact["metadata"] = {
+                            **metadata,
+                            "analysis_mode": "recursive",
+                            "research_iteration": state.iteration,
+                            "search_query": group["query"],
+                        }
                     all_facts.extend(facts)
                     recursive_facts.extend(facts)
                     standalone_data_points.extend(
@@ -425,9 +447,16 @@ URL: {url}
                 analysis_notes.append(
                     {
                         "agent": self.name,
+                        "extraction_batch_id": extraction_batch_id,
                         "section_id": section_id,
                         "search_query": group["query"],
                         "analysis_mode": group["mode"],
+                        "source_count": len(group["sources"]),
+                        "candidate_fact_count": len(raw_facts),
+                        "accepted_fact_count": len(facts),
+                        "rejected_fact_count": max(0, len(raw_facts) - len(facts)),
+                        "warning_count": len(optional_warnings),
+                        "warnings": optional_warnings[:20],
                         "source_quality_assessment": str(
                             result.get(
                                 "source_quality_assessment",
@@ -445,6 +474,7 @@ URL: {url}
                     analysis_notes.append(
                         {
                             "agent": self.name,
+                            "extraction_batch_id": extraction_batch_id,
                             "section_id": section_id,
                             "warning": "ignored_invalid_optional_fields",
                             "details": optional_warnings[:20],
@@ -557,9 +587,11 @@ URL: {url}
                 "sources": source_context,
             }
             search_results = "\n".join(
-                "标题: {title}\n来源: {source}\n内容: {summary}".format(
+                "标题: {title}\nURL: {url}\n来源: {source}\n日期: {date}\n内容: {summary}".format(
                     title=source.get("title") or "N/A",
+                    url=source.get("url") or "N/A",
                     source=source.get("source") or "N/A",
+                    date=source.get("date") or "N/A",
                     summary=str(source.get("summary", ""))[:300],
                 )
                 for source in source_context
@@ -593,9 +625,11 @@ URL: {url}
                 "hypotheses": hypotheses,
             }
             search_results = "\n".join(
-                "标题: {title}\n来源: {source}\n内容: {summary}".format(
+                "标题: {title}\nURL: {url}\n来源: {source}\n日期: {date}\n内容: {summary}".format(
                     title=source.get("title") or "N/A",
+                    url=source.get("url") or "N/A",
                     source=source.get("source") or "N/A",
+                    date=source.get("date") or "N/A",
                     summary=str(source.get("summary", ""))[:300],
                 )
                 for source in source_context

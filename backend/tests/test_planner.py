@@ -39,12 +39,11 @@ class PlannerAgentTests(unittest.TestCase):
             async def complete_json(self, role, payload, system_prompt="", user_prompt=""):
                 self.user_prompt = user_prompt
                 return {
-                    "research_subject": "王维",
                     "hypothesis_1": "王维的创作受到时代与个人经历影响",
                     "sec_1_title": "发展历程",
                     "sec_1_desc": "梳理王维一生中的关键阶段",
                     "sec_1_query": "王维 生平发展历程",
-                    "sec_2_title": "业务变化",
+                    "sec_2_title": "创作经历",
                     "sec_2_desc": "分析王维创作与经历的变化",
                     "sec_2_query": "王维 创作经历变化",
                     "sec_3_title": "未来趋势",
@@ -65,10 +64,12 @@ class PlannerAgentTests(unittest.TestCase):
         state, client = asyncio.run(run())
         self.assertEqual([section["id"] for section in state.outline], ["sec_1", "sec_2", "sec_3"])
         self.assertEqual(state.outline[0]["search_queries"], ["王维 生平发展历程"])
-        self.assertFalse(state.outline[0]["requires_data"])
-        self.assertFalse(state.outline[0]["requires_chart"])
+        self.assertTrue(state.outline[0]["requires_data"])
+        self.assertTrue(state.outline[0]["requires_chart"])
         self.assertEqual(state.hypotheses[0]["content"], "王维的创作受到时代与个人经历影响")
         self.assertEqual(state.research_questions, ["经历了哪些阶段？", "未来趋势是什么？"])
+        self.assertEqual(state.planner_diagnostics[0]["response_format"], "reference_flat")
+        self.assertTrue(state.planner_diagnostics[0]["accepted"])
         self.assertIn("介绍一下诗人王维的一生", client.user_prompt)
         self.assertIn('"outline"', client.user_prompt)
         self.assertNotIn("市场概况", client.user_prompt)
@@ -112,7 +113,7 @@ class PlannerAgentTests(unittest.TestCase):
         self.assertIn("介绍一下诗人王维的一生", client.user_prompt)
         self.assertIn("人物研究可按生平阶段", client.user_prompt)
         self.assertIn("不能把问题改成另一个主题", client.user_prompt)
-        self.assertIn("research_subject填写用户问题中直接出现的核心对象名称", client.user_prompt)
+        self.assertIn("research_subject填写用户问题中的核心对象名称", client.user_prompt)
         self.assertNotIn("市场概况", client.user_prompt)
         self.assertNotIn("AI芯片", client.user_prompt)
 
@@ -266,13 +267,257 @@ class PlannerAgentTests(unittest.TestCase):
 
         self.assertIs(result, state)
         self.assertEqual(len(client.calls), 3)
-        self.assertEqual(state.errors, ["Failed to generate research plan after retries"])
-        self.assertEqual(state.phase, "init")
+        self.assertIn("Planner 三次尝试均未通过大纲校验", state.errors[0])
+        self.assertEqual(state.phase, "planning")
+        self.assertEqual(len(state.planner_diagnostics), 3)
+        self.assertFalse(state.planner_diagnostics[0]["accepted"])
+        self.assertIn("章节数为 0", state.planner_diagnostics[0]["validation_error"])
         retry_prompt = client.calls[1]["user_prompt"]
-        self.assertIn('"key_entities": []', retry_prompt)
+        self.assertIn('"key_entities":', retry_prompt)
         self.assertIn("测试问题", retry_prompt)
+        self.assertIn("章节数为 0", retry_prompt)
         self.assertNotIn("市场概况", retry_prompt)
-        self.assertNotIn('"hypotheses"', retry_prompt)
+        self.assertIn('"outline"', retry_prompt)
+
+    def test_flat_reference_plan_infers_subject_from_query_and_keeps_reference_defaults(self):
+        class FlatClient(LLMClient):
+            async def complete_json(self, role, payload, **kwargs):
+                return {
+                    "sec_1_title": "行业供需",
+                    "sec_1_desc": "分析东岳硅材所在有机硅行业的供需情况",
+                    "sec_1_query": "东岳硅材 有机硅行业 供需",
+                    "sec_2_title": "经营表现",
+                    "sec_2_desc": "梳理东岳硅材近年的产能和经营表现",
+                    "sec_2_query": "东岳硅材 产能 经营数据",
+                    "sec_3_title": "价格走势",
+                    "sec_3_desc": "分析有机硅价格变化及其对公司的影响",
+                    "sec_3_query": "东岳硅材 有机硅价格走势",
+                    "questions": "供需如何变化？;经营表现如何？",
+                }
+
+            async def complete_text(self, role, payload, **kwargs):
+                return ""
+
+        state = ResearchState(
+            "分析东岳硅材所在有机硅行业2021—2025年景气和东岳硅材经营表现"
+        )
+        asyncio.run(PlannerAgent(FlatClient()).run(state))
+
+        self.assertEqual(len(state.outline), 3)
+        self.assertEqual(state.outline[0]["requires_data"], True)
+        self.assertEqual(state.outline[0]["requires_chart"], True)
+        self.assertEqual(state.outline[2]["requires_data"], False)
+        self.assertEqual(state.planner_diagnostics[0]["response_format"], "reference_flat")
+        self.assertIn("东岳硅材", state.planner_diagnostics[0]["response_preview"])
+
+    def test_topic_guard_allows_section_specific_terms_without_repeating_subject_everywhere(self):
+        class RelevantPlannerClient(LLMClient):
+            async def complete_json(self, role, payload, **kwargs):
+                return {
+                    "research_subject": "东岳硅材",
+                    "outline": [
+                        {
+                            "title": "公司经营",
+                            "description": "分析东岳硅材的经营和财务表现",
+                            "search_queries": ["东岳硅材 营收 产能"],
+                        },
+                        {
+                            "title": "行业供需",
+                            "description": "结合公司业务分析有机硅行业供需",
+                            "search_queries": ["有机硅行业 供需变化"],
+                        },
+                        {
+                            "title": "产品价格",
+                            "description": "评估产品价格变化对企业的影响",
+                            "search_queries": ["有机硅价格走势"],
+                        },
+                    ],
+                }
+
+            async def complete_text(self, role, payload, **kwargs):
+                return ""
+
+        state = ResearchState("分析东岳硅材所在有机硅行业的经营和价格走势")
+        asyncio.run(PlannerAgent(RelevantPlannerClient()).run(state))
+
+        self.assertEqual(len(state.outline), 3)
+        self.assertEqual(len(state.planner_diagnostics), 1)
+        self.assertTrue(state.planner_diagnostics[0]["accepted"])
+
+    def test_topic_guard_accepts_composed_subject_from_real_company_query(self):
+        class CompositeSubjectClient(LLMClient):
+            async def complete_json(self, role, payload, **kwargs):
+                return {
+                    "research_subject": (
+                        "东岳硅材所在有机硅行业2021—2025年的行业景气和市场走势"
+                        "及东岳硅材经营表现"
+                    ),
+                    "outline": [
+                        {
+                            "title": "有机硅供需",
+                            "description": "分析东岳硅材所在有机硅行业的供需和产能",
+                            "search_queries": ["有机硅行业 2021 2025 供需 产能"],
+                        },
+                        {
+                            "title": "价格走势",
+                            "description": "分析有机硅价格变化与行业景气",
+                            "search_queries": ["有机硅行业 2021 2025 价格走势"],
+                        },
+                        {
+                            "title": "公司经营",
+                            "description": "梳理东岳硅材的经营表现",
+                            "search_queries": ["东岳硅材 2021 2025 营收 利润"],
+                        },
+                    ],
+                }
+
+            async def complete_text(self, role, payload, **kwargs):
+                return ""
+
+        state = ResearchState(
+            "分析东岳硅材所在有机硅行业 2021—2025 年的行业景气和市场走势，"
+            "并结合东岳硅材同期的经营表现撰写详细报告；"
+            "重点关注供需、价格、产能和企业经营数据。"
+        )
+        asyncio.run(PlannerAgent(CompositeSubjectClient()).run(state))
+
+        self.assertEqual(len(state.outline), 3)
+        self.assertEqual(len(state.planner_diagnostics), 1)
+        self.assertTrue(state.planner_diagnostics[0]["accepted"])
+
+    def test_topic_guard_does_not_use_unrelated_words_in_composed_subject_as_anchors(self):
+        class SubjectWithUnrelatedTopicClient(LLMClient):
+            async def complete_json(self, role, payload, **kwargs):
+                return {
+                    "research_subject": "王维与人工智能行业",
+                    "outline": [
+                        {
+                            "title": title,
+                            "description": "分析人工智能行业及其技术发展",
+                            "search_queries": [f"人工智能行业 {title}"],
+                        }
+                        for title in ("市场规模", "竞争格局", "技术趋势")
+                    ],
+                }
+
+            async def complete_text(self, role, payload, **kwargs):
+                return ""
+
+        state = ResearchState("介绍一下王维的一生")
+        asyncio.run(PlannerAgent(SubjectWithUnrelatedTopicClient()).run(state))
+
+        self.assertEqual(state.outline, [])
+        self.assertEqual(len(state.planner_diagnostics), 3)
+        self.assertIn("关联不足", state.planner_diagnostics[-1]["validation_error"])
+
+    def test_topic_guard_rejects_unrelated_plan_and_records_exact_reason(self):
+        class OffTopicClient(LLMClient):
+            async def complete_json(self, role, payload, **kwargs):
+                return {
+                    "research_subject": "王维",
+                    "outline": [
+                        {
+                            "title": title,
+                            "description": "分析全球人工智能市场和大模型发展",
+                            "search_queries": [f"人工智能 {title}"],
+                        }
+                        for title in ("AI市场规模", "AI竞争格局", "AI技术趋势")
+                    ],
+                }
+
+            async def complete_text(self, role, payload, **kwargs):
+                return ""
+
+        state = ResearchState("介绍一下诗人王维的一生")
+        asyncio.run(PlannerAgent(OffTopicClient()).run(state))
+
+        self.assertEqual(len(state.planner_diagnostics), 3)
+        self.assertTrue(all(not item["accepted"] for item in state.planner_diagnostics))
+        self.assertIn("关联不足", state.planner_diagnostics[-1]["validation_error"])
+        self.assertIn("最后一次拒绝原因", state.errors[-1])
+
+    def test_topic_guard_rejects_plan_where_most_sections_drift_off_topic(self):
+        class MostlyOffTopicClient(LLMClient):
+            def __init__(self):
+                self.calls = 0
+
+            async def complete_json(self, role, payload, **kwargs):
+                self.calls += 1
+                if self.calls == 1:
+                    sections = [
+                        ("生平经历", "梳理王维的重要人生经历", "王维 生平经历"),
+                        ("作品影响", "分析王维作品的文学影响", "王维 作品 文学影响"),
+                        ("AI市场规模", "分析人工智能芯片市场规模", "AI芯片 市场规模"),
+                        ("AI竞争格局", "分析人工智能芯片企业竞争", "AI芯片 企业竞争"),
+                        ("AI技术趋势", "分析人工智能芯片技术趋势", "AI芯片 技术趋势"),
+                        ("AI政策环境", "梳理人工智能产业政策环境", "人工智能 政策环境"),
+                    ]
+                else:
+                    sections = [
+                        (title, f"围绕王维研究{title}", f"王维 {title}")
+                        for title in ("生平经历", "时代背景", "作品影响", "历史地位", "诗歌特色", "后世评价")
+                    ]
+                return {
+                    "research_subject": "王维",
+                    "outline": [
+                        {
+                            "title": title,
+                            "description": description,
+                            "search_queries": [query],
+                        }
+                        for title, description, query in sections
+                    ],
+                }
+
+            async def complete_text(self, role, payload, **kwargs):
+                return ""
+
+        client = MostlyOffTopicClient()
+        state = ResearchState("介绍一下诗人王维的一生")
+        asyncio.run(PlannerAgent(client).run(state))
+
+        self.assertEqual(client.calls, 2)
+        self.assertFalse(state.planner_diagnostics[0]["accepted"])
+        self.assertIn("关联不足", state.planner_diagnostics[0]["validation_error"])
+        self.assertTrue(state.planner_diagnostics[1]["accepted"])
+        self.assertEqual(state.outline[0]["title"], "生平经历")
+
+    def test_planner_retries_after_model_call_failure_and_records_each_attempt(self):
+        class TemporarilyUnavailableClient(LLMClient):
+            def __init__(self):
+                self.calls = 0
+                self.prompts = []
+
+            async def complete_json(self, role, payload, **kwargs):
+                self.calls += 1
+                self.prompts.append(kwargs.get("user_prompt", ""))
+                if self.calls == 1:
+                    raise RuntimeError("temporary provider timeout")
+                return {
+                    "research_subject": "王维",
+                    "outline": [
+                        {
+                            "title": title,
+                            "description": f"围绕王维研究{title}。",
+                            "search_queries": [f"王维 {title}"],
+                        }
+                        for title in ("生平经历", "时代背景", "作品影响")
+                    ],
+                }
+
+            async def complete_text(self, role, payload, **kwargs):
+                return ""
+
+        client = TemporarilyUnavailableClient()
+        state = ResearchState("介绍一下诗人王维的一生")
+        asyncio.run(PlannerAgent(client).run(state))
+
+        self.assertEqual(client.calls, 2)
+        self.assertEqual(len(state.planner_diagnostics), 2)
+        self.assertFalse(state.planner_diagnostics[0]["accepted"])
+        self.assertIn("temporary provider timeout", state.planner_diagnostics[0]["validation_error"])
+        self.assertIn("temporary provider timeout", client.prompts[1])
+        self.assertTrue(state.planner_diagnostics[1]["accepted"])
 
 
 if __name__ == "__main__":

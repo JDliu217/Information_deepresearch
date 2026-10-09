@@ -14,7 +14,7 @@ from app.agents.code_wizard import CodeWizardAgent
 from app.agents.critic import CriticAgent
 from app.agents.data_analyst import DataAnalystAgent
 from app.agents.fact_extractor import FactExtractorAgent
-from app.agents.planner import PlannerAgent
+from app.agents.planner import PlannerAgent, PlanningFailure
 from app.agents.researcher import ResearcherAgent
 from app.agents.writer import WriterAgent
 from app.domain.events import ResearchEvent, ResearchEventType
@@ -66,7 +66,7 @@ class ResearchGraphNodes:
         await self.planner.run(state)
         if not state.outline:
             reason = state.errors[-1] if state.errors else "Planner 没有生成研究大纲"
-            raise ValueError(f"研究规划失败，停止后续搜索：{reason}")
+            raise PlanningFailure(f"研究规划失败，停止后续搜索：{reason}", state)
         return {
             "research_state": state,
             "events": [
@@ -109,6 +109,7 @@ class ResearchGraphNodes:
 
     async def extract_facts(self, graph_state: ResearchGraphState) -> dict[str, Any]:
         state = deepcopy(graph_state["research_state"])
+        previous_log_count = len(state.logs)
         supplementary = bool(graph_state.get("supplementary", False))
         if supplementary and int(graph_state.get("research_depth", 0)) > 0:
             extraction_mode = "recursive"
@@ -117,6 +118,22 @@ class ResearchGraphNodes:
         else:
             extraction_mode = "normal"
         await self.fact_extractor.run(state, mode=extraction_mode)
+        fact_extraction_diagnostics = [
+            {
+                "mode": log.get("analysis_mode", extraction_mode),
+                "search_query": log.get("search_query", ""),
+                "section_id": log.get("section_id", ""),
+                "source_count": log.get("source_count", 0),
+                "candidate_fact_count": log.get("candidate_fact_count", 0),
+                "accepted_fact_count": log.get("accepted_fact_count", 0),
+                "rejected_fact_count": log.get("rejected_fact_count", 0),
+                "warning_count": log.get("warning_count", 0),
+                "warnings": log.get("warnings", []),
+            }
+            for log in state.logs[previous_log_count:]
+            if log.get("agent") == self.fact_extractor.name
+            and "search_query" in log
+        ]
         return {
             "research_state": state,
             # The current extraction pass has consumed the supplementary
@@ -133,6 +150,7 @@ class ResearchGraphNodes:
                     sources=state.raw_sources,
                     facts=state.facts,
                     references=state.references,
+                    fact_extraction_diagnostics=fact_extraction_diagnostics,
                 )
             ]
         }
@@ -242,6 +260,8 @@ class ResearchGraphNodes:
                     critic_feedback=state.critic_feedback,
                     quality_score=state.quality_score,
                     unresolved_issues=state.unresolved_issues,
+                    review_history=state.review_history,
+                    issue_progress=state.review_result.get("issue_progress", {}),
                     fact_check_results=state.review_result.get("fact_check_results", []),
                     missing_aspects=state.review_result.get("missing_aspects", []),
                     strengths=state.review_result.get("strengths", []),
@@ -267,10 +287,21 @@ class ResearchGraphNodes:
                     "research_completed",
                     report=state.final_report,
                     quality_score=state.quality_score,
+                    quality_status=(
+                        "passed"
+                        if state.review_result.get("verdict") == "pass"
+                        else "review_incomplete"
+                        if state.review_result.get("verdict")
+                        in {"needs_revision", "major_issues"}
+                        else "not_reviewed"
+                    ),
+                    quality_gate_passed=state.review_result.get("verdict") == "pass",
                     references=state.references,
                     review_result=state.review_result,
                     critic_feedback=state.critic_feedback,
                     unresolved_issues=state.unresolved_issues,
+                    review_history=state.review_history,
+                    issue_progress=state.review_result.get("issue_progress", {}),
                     fact_check_results=state.review_result.get("fact_check_results", []),
                     missing_aspects=state.review_result.get("missing_aspects", []),
                     strengths=state.review_result.get("strengths", []),

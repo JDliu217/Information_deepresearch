@@ -9,6 +9,11 @@ from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
 
 from app.graph.runtime import ResearchGraphRuntime, create_research_runtime
+from app.persistence.database import (
+    DatabaseSettings,
+    create_database_engine,
+    create_session_factory,
+)
 from app.persistence.repository import ResearchRepository
 
 from .env import load_project_env
@@ -50,7 +55,24 @@ def create_configured_runtime(
 ) -> ResearchGraphRuntime:
     """按环境配置创建完整 runtime。"""
 
+    load_project_env()
+    try:
+        max_iterations = int(os.getenv("RESEARCH_MAX_ITERATIONS", "3"))
+    except ValueError as exc:
+        raise ValueError("RESEARCH_MAX_ITERATIONS 必须是非负整数") from exc
+    if max_iterations < 0:
+        raise ValueError("RESEARCH_MAX_ITERATIONS 必须是非负整数")
+
     control = run_control or InMemoryRunControlStore()
+    if repository is None:
+        database_settings = DatabaseSettings.from_env()
+        if database_settings.url:
+            engine = create_database_engine(database_settings)
+            repository = ResearchRepository(
+                create_session_factory(engine),
+                engine=engine,
+                owns_engine=True,
+            )
     saver = checkpointer or InMemorySaver(
         serde=JsonPlusSerializer(
             allowed_msgpack_modules=[("app.domain.state", "ResearchState")]
@@ -59,6 +81,7 @@ def create_configured_runtime(
     return create_research_runtime(
         create_configured_llm(force_real=force_real),
         create_configured_search(force_real=force_real),
+        max_iterations=max_iterations,
         run_control=control,
         repository=repository,
         checkpointer=saver,

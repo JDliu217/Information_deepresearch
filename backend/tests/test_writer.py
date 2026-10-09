@@ -89,9 +89,55 @@ class WriterAgentTests(unittest.TestCase):
 
         state, client = asyncio.run(run())
         self.assertEqual(state.final_report, "修订后的报告")
+        self.assertFalse(state.critic_feedback[0]["resolved"])
         self.assertEqual(state.phase, "reviewing")
-        self.assertLessEqual(len(client.payload["original_content"]), 6000)
+        self.assertLessEqual(
+            len(client.payload["original_content"]), WriterAgent.MAX_REVISION_REPORT_CHARS
+        )
         self.assertEqual(len(client.payload["new_facts"]), 5)
+
+    def test_writer_revision_includes_current_supplementary_facts_with_citations(self):
+        class CapturingWriterClient(MockLLMClient):
+            def __init__(self):
+                self.payload = None
+                self.user_prompt = ""
+
+            async def complete_text(
+                self, role, payload, system_prompt="", user_prompt="", **kwargs
+            ):
+                self.payload = payload
+                self.user_prompt = user_prompt
+                return json.dumps({"revised_content": "加入补充证据后的报告"}, ensure_ascii=False)
+
+        async def run():
+            client = CapturingWriterClient()
+            state = ResearchState("测试问题")
+            state.iteration = 1
+            state.final_report = "完整报告" * 2000
+            state.facts = [
+                {"content": f"旧事实 {index}"}
+                for index in range(8)
+            ]
+            state.facts.append(
+                {
+                    "content": "2024年营业收入为51.51亿元。",
+                    "source_name": "公司业绩快报",
+                    "source_url": "https://example.com/annual-report",
+                    "metadata": {
+                        "analysis_mode": "supplementary",
+                        "research_iteration": 1,
+                        "search_query": "公司2024年营业收入",
+                    },
+                }
+            )
+            await WriterAgent(client).revise(state)
+            return client
+
+        client = asyncio.run(run())
+        self.assertEqual(len(client.payload["original_content"]), len("完整报告" * 2000))
+        self.assertEqual(len(client.payload["new_facts"]), 1)
+        self.assertIn("https://example.com/annual-report", client.user_prompt)
+        self.assertIn("51.51亿元", client.user_prompt)
 
     def test_writer_generates_cited_report(self):
         async def run_chain():
@@ -215,7 +261,7 @@ class WriterAgentTests(unittest.TestCase):
         self.assertIn("有来源的事实", result.final_report)
         self.assertEqual(result.references, [])
 
-    def test_writer_appends_citations_and_deduplicates_only_exact_synthesis_references(self):
+    def test_writer_rejects_citations_without_a_retrieved_source_url(self):
         class CitationClient(MockLLMClient):
             async def complete_text(self, role, payload, system_prompt="", user_prompt=""):
                 if payload.get("mode") == "section":
@@ -244,18 +290,103 @@ class WriterAgentTests(unittest.TestCase):
         state.facts = [{"content": "事实", "source_url": "https://example.com/source"}]
         result = asyncio.run(WriterAgent(CitationClient()).run(state))
 
-        self.assertEqual(
-            result.references,
-            [
-                {"id": 1, "marker": None, "source": "未知", "url": "https://untrusted.example"},
-                {"id": 2, "marker": None, "source": "未知", "url": "https://untrusted.example"},
-                {
-                    "id": 10,
-                    "title": "模型给出的来源",
-                    "url": "https://also-untrusted.example",
-                },
-            ],
+        self.assertEqual(result.references, [])
+        self.assertNotIn("https://untrusted.example", result.final_report)
+        self.assertNotIn("https://also-untrusted.example", result.final_report)
+        self.assertTrue(
+            any(log.get("event") == "unsupported_citations_removed" for log in result.logs)
         )
+
+    def test_writer_passes_fact_urls_to_section_prompt_and_keeps_verified_links(self):
+        class CitationClient(MockLLMClient):
+            async def complete_text(self, role, payload, system_prompt="", user_prompt="", **kwargs):
+                if payload.get("mode") == "section":
+                    self.section_prompt = user_prompt
+                    return json.dumps(
+                        {
+                            "content": (
+                                "事实来自[公司公告](https://example.com/notice)，"
+                                "另一个引用[伪造来源](https://fake.example/report)。"
+                            ),
+                            "citations": [
+                                {"source": "公司公告", "url": "https://example.com/notice"},
+                                {"source": "伪造来源", "url": "https://fake.example/report"},
+                            ],
+                        },
+                        ensure_ascii=False,
+                    )
+                if payload.get("mode") == "report":
+                    return json.dumps({"full_report": ""}, ensure_ascii=False)
+                return await super().complete_text(
+                    role, payload, system_prompt, user_prompt, **kwargs
+                )
+
+        state = ResearchState("测试问题")
+        state.outline = [{"id": "sec-1", "title": "章节一"}]
+        state.raw_sources = [{"title": "公司公告", "url": "https://example.com/notice"}]
+        state.facts = [
+            {
+                "id": "fact-1",
+                "content": "有来源的事实",
+                "source_name": "公司公告",
+                "source_url": "https://example.com/notice",
+                "section_id": "sec-1",
+            }
+        ]
+        client = CitationClient()
+        result = asyncio.run(WriterAgent(client).run(state))
+
+        self.assertIn("https://example.com/notice", client.section_prompt)
+        self.assertIn("[公司公告](https://example.com/notice)", result.final_report)
+        self.assertNotIn("https://fake.example/report", result.final_report)
+        self.assertEqual(
+            [reference["url"] for reference in result.references],
+            ["https://example.com/notice"],
+        )
+
+    def test_writer_does_not_cite_a_site_homepage_as_evidence(self):
+        class HomepageClient(MockLLMClient):
+            async def complete_text(self, role, payload, system_prompt="", user_prompt="", **kwargs):
+                if payload.get("mode") == "section":
+                    return json.dumps(
+                        {
+                            "content": "公司收入见[公司网站](https://example.com/)。",
+                            "citations": [
+                                {"source": "公司网站", "url": "https://example.com/"}
+                            ],
+                        },
+                        ensure_ascii=False,
+                    )
+                if payload.get("mode") == "report":
+                    return json.dumps(
+                        {
+                            "full_report": "公司收入见[公司网站](https://example.com/)。",
+                            "references": [
+                                {"title": "公司网站", "url": "https://example.com/"}
+                            ],
+                        },
+                        ensure_ascii=False,
+                    )
+                return await super().complete_text(
+                    role, payload, system_prompt, user_prompt, **kwargs
+                )
+
+        state = ResearchState("测试问题")
+        state.outline = [{"id": "sec-1", "title": "经营情况"}]
+        state.raw_sources = [{"title": "公司网站", "url": "https://example.com/"}]
+        state.facts = [
+            {
+                "content": "公司收入有相关报道",
+                "source_name": "公司网站",
+                "source_url": "https://example.com/",
+                "section_id": "sec-1",
+            }
+        ]
+        result = asyncio.run(WriterAgent(HomepageClient()).run(state))
+
+        self.assertNotIn("](https://example.com/)", result.final_report)
+        self.assertIn("站点首页/栏目页不能核验具体事实", result.final_report)
+        self.assertEqual(result.references, [])
 
     def test_writer_prefers_facts_from_the_matching_section(self):
         async def run():

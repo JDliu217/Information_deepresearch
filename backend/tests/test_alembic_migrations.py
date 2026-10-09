@@ -15,11 +15,22 @@ class AlembicMigrationTests(unittest.TestCase):
             database_path = Path(directory) / "migration.sqlite"
             alembic_config.set_main_option("sqlalchemy.url", f"sqlite:///{database_path}")
 
-            command.upgrade(alembic_config, "head")
+            command.upgrade(alembic_config, "001_create_research_tables")
             engine = create_engine(f"sqlite:///{database_path}")
             self.assertEqual(
                 set(inspect(engine).get_table_names()),
                 {"alembic_version", "research_runs", "research_events"},
+            )
+            self.assertNotIn(
+                "status",
+                {column["name"] for column in inspect(engine).get_columns("research_runs")},
+            )
+
+            command.upgrade(alembic_config, "head")
+            self.assertTrue(
+                {"status", "error"}.issubset(
+                    {column["name"] for column in inspect(engine).get_columns("research_runs")}
+                )
             )
 
             command.downgrade(alembic_config, "base")

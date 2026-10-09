@@ -853,11 +853,22 @@ class FactExtractorAgentTests(unittest.TestCase):
         self.assertIn("原始研究问题", first_prompt)
         self.assertIn("补充查询一", first_prompt)
         self.assertIn("补充查询一 来源 7", first_prompt)
+        self.assertIn("URL: https://example.com/补充查询一/7", first_prompt)
+        self.assertIn("source_url 必须逐字复制", first_prompt)
         self.assertNotIn("补充查询一 来源 8", first_prompt)
         self.assertNotIn("S" * 301, first_prompt)
         self.assertEqual(len(state.facts), 2)
         self.assertTrue(all("data_points" not in fact for fact in state.facts))
         self.assertTrue(all(fact["related_sections"] == [] for fact in state.facts))
+        self.assertTrue(
+            all(fact["metadata"]["analysis_mode"] == "supplementary" for fact in state.facts)
+        )
+        self.assertTrue(
+            all(fact["metadata"]["research_iteration"] == state.iteration for fact in state.facts)
+        )
+        self.assertEqual(
+            state.logs[0]["accepted_fact_count"], 1
+        )
         self.assertEqual(state.data_points, [])
         self.assertNotIn("旧普通来源", " ".join(call["user_prompt"] for call in client.calls))
 
@@ -948,6 +959,8 @@ class FactExtractorAgentTests(unittest.TestCase):
         tracing_prompt, follow_up_prompt = [call["user_prompt"] for call in client.calls]
         self.assertIn("追溯原始数据源", tracing_prompt)
         self.assertIn("追踪相关线索", follow_up_prompt)
+        self.assertIn("URL: https://example.com/追溯查询/5", tracing_prompt)
+        self.assertIn("source_url 必须逐字复制", follow_up_prompt)
         self.assertIn("假设 3", tracing_prompt)
         self.assertNotIn("假设 4", tracing_prompt)
         self.assertIn("追溯查询 来源 5", tracing_prompt)

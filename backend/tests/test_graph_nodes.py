@@ -94,6 +94,35 @@ class GraphNodeTests(unittest.TestCase):
 
         self.assertFalse(result["supplementary"])
         self.assertTrue(result["events"][0]["supplementary"])
+        self.assertIn("fact_extraction_diagnostics", result["events"][0])
+
+    def test_complete_event_distinguishes_review_pass_from_iteration_limit(self):
+        passed = ResearchState("测试问题")
+        passed.review_result = {"verdict": "pass"}
+        passed_event = self.nodes.complete(initial_graph_state(passed))["events"][0]
+
+        incomplete = ResearchState("测试问题")
+        incomplete.review_result = {"verdict": "needs_revision"}
+        incomplete.unresolved_issues = 3
+        incomplete_event = self.nodes.complete(initial_graph_state(incomplete))["events"][0]
+
+        self.assertEqual(passed_event["quality_status"], "passed")
+        self.assertTrue(passed_event["quality_gate_passed"])
+        self.assertEqual(incomplete_event["quality_status"], "review_incomplete")
+        self.assertFalse(incomplete_event["quality_gate_passed"])
+
+    def test_review_event_exposes_per_iteration_score_and_issue_progress(self):
+        state = ResearchState("测试问题")
+        state.final_report = "一份待审核的报告"
+        state.outline = [{"id": "sec-1", "title": "章节", "status": "drafted"}]
+
+        result = asyncio.run(self.nodes.review(initial_graph_state(state)))
+        event = result["events"][0]
+
+        self.assertEqual(event["type"], "review_completed")
+        self.assertEqual(event["review_history"], result["research_state"].review_history)
+        self.assertEqual(event["issue_progress"]["quality_score"], event["quality_score"])
+        self.assertIn("new_issue_ids", event["issue_progress"])
 
     def test_extract_facts_passes_reference_analysis_mode_to_agent(self):
         class RecordingFactExtractor:

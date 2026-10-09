@@ -8,6 +8,7 @@ import re
 from collections.abc import Callable
 from datetime import datetime, timezone
 from typing import Any
+from urllib.parse import urlparse
 
 from app.core.llm_client import LLMClient
 from app.domain.state import ResearchState
@@ -19,6 +20,8 @@ class WriterAgent(BaseAgent):
     """按章节整理事实，并生成带来源的 Markdown 报告。"""
 
     name = "writer"
+    MAX_REVISION_REPORT_CHARS = 24000
+    MAX_REVISION_FACTS = 20
     SECTION_WRITING_SYSTEM = "你是资深研究分析师，擅长依据来源材料撰写清晰、严谨的研究报告。"
     SYNTHESIS_SYSTEM = "你是资深的研究报告主编，擅长整合和打磨最终报告。"
     REVISION_SYSTEM = "你是负责修订报告的资深编辑。"
@@ -36,6 +39,9 @@ class WriterAgent(BaseAgent):
 
 ### 相关事实
 {facts}
+
+### 可用来源链接
+{sources}
 
 ### 数据点
 {data_points}
@@ -71,6 +77,7 @@ class WriterAgent(BaseAgent):
 - 开头直接回应本章节主题，不要使用与当前研究对象无关的行业或领域作为示例
 - 只使用可用素材中的事实和数据；素材没有提供时明确说明，不得补造
 - 需要引用时使用 [来源名称](URL) 格式，不得编造来源链接
+- 站点首页或栏目页不能单独作为具体数字、公告或文章的证据；只有这类链接时，说明该项无法从现有来源核实
 
 开始撰写："""
     SYNTHESIS_PROMPT = r"""你是首席笔杆，需要将各章节整合成完整的研究报告。
@@ -89,6 +96,7 @@ class WriterAgent(BaseAgent):
 2. 整合各章节，确保逻辑连贯，使用层级编号
 3. 撰写有证据支持的结论；只有主题适用时才提出展望，不要强行预测
 4. 整理参考文献列表（确保链接可点击）
+5. 只能引用“收集的所有引用来源”中逐字出现的 URL；没有对应来源时不得补造参考文献
 
 ## 关键要求
 
@@ -101,6 +109,7 @@ class WriterAgent(BaseAgent):
 ### 2. 引用格式规则（确保可点击）
 - 行内引用：使用 [来源名称](URL) 格式，链接必须来自可用素材
 - 数据引用：在数据后标注对应来源；没有来源支持的数据不得写入报告
+- 若同一指标、期间和单位出现不同数值，保留差异并说明统计口径或来源不一致；证据不足时不得自行选值或计算折中值
 - 文末参考文献：使用有序列表 + 可点击链接格式
 
 ### 3. 报告结构规范
@@ -190,6 +199,8 @@ class WriterAgent(BaseAgent):
 2. 补充来源：对缺少来源的观点补充引用
 3. 修正错误：纠正事实错误或逻辑漏洞
 4. 保持风格：修订后保持报告整体风格一致
+5. 每条反馈都带有稳定的问题 ID；`addressed_issues` 和 `unable_to_address` 必须使用这些原 ID。补充事实附有来源名称和 URL；引用时只能使用给出的 URL。没有证据支持的问题要明确说明无法核实，不得猜测或编造。
+6. 保留原报告中未被指出的问题的章节和内容，不要因修订遗漏整章或截断结论、参考文献。
 
 输出JSON：
 ```json
@@ -197,7 +208,7 @@ class WriterAgent(BaseAgent):
     "revised_content": "修订后的内容",
     "changes_made": ["修改1", "修改2"],
     "addressed_issues": ["已解决的问题ID"],
-    "unable_to_address": ["无法解决的问题及原因"]
+    "unable_to_address": [{{"issue_id": "原问题ID", "reason": "无法解决的原因"}}]
 }}
 ```"""
 
@@ -248,13 +259,15 @@ class WriterAgent(BaseAgent):
             )
             related_facts = self._facts_for_section(state.facts, section_id)
             facts_text = "\n".join(
-                f"- {fact.get('content')} (来源: {fact.get('source_name') or fact.get('source_title')}, "
+                f"- {fact.get('content')} (来源: [{fact.get('source_name') or fact.get('source_title') or '未知来源'}]"
+                f"({fact.get('source_url') or '无可用URL'}), "
                 f"可信度: {fact.get('credibility_score', fact.get('confidence'))})"
                 for fact in related_facts
             ) or "（暂无相关事实）"
+            sources_text = self._format_section_sources(related_facts)
             data_text = "\n".join(
                 f"- {point.get('name')}: {point.get('value')} {point.get('unit', '')} "
-                f"({point.get('year', 'N/A')})"
+                f"({point.get('year', 'N/A')}; 来源URL: {self._source_url_for_attribution(point.get('source'), state.facts)})"
                 for point in state.data_points[:10]
             ) or "（暂无数据点）"
             insights_text = "\n".join(f"- {insight}" for insight in state.insights[:5]) or "（暂无洞察）"
@@ -284,6 +297,7 @@ class WriterAgent(BaseAgent):
                     section_description=section.get("description", ""),
                     section_type=section.get("section_type", "mixed"),
                     facts=facts_text,
+                    sources=sources_text,
                     data_points=data_text,
                     insights=insights_text,
                     charts_info=charts_info,
@@ -297,18 +311,46 @@ class WriterAgent(BaseAgent):
                 normalized_outline.append(section)
                 continue
 
+            section_content, invalid_urls = self._remove_unverified_links(
+                section_content, self._allowed_citation_urls(state)
+            )
+            if invalid_urls:
+                state.logs.append(
+                    {
+                        "agent": self.name,
+                        "event": "unsupported_citations_removed",
+                        "section_id": section_id,
+                        "urls": invalid_urls,
+                    }
+                )
+
             section["status"] = "drafted"
             draft_sections[section_id] = section_content
-            # LeadWriter appends every citation returned for a drafted section.
-            # Keep the same behavior here; source validation belongs to the
-            # upstream evidence pipeline, not to the Writer's reference merge.
+            rejected_citation_urls: list[str] = []
             for citation in section_result.get("citations", []):
+                citation_url = str(citation.get("url", "")).strip()
+                allowed_urls = {
+                    self._canonical_url(url) for url in self._allowed_citation_urls(state)
+                }
+                if not citation_url or self._canonical_url(citation_url) not in allowed_urls:
+                    if citation_url:
+                        rejected_citation_urls.append(citation_url)
+                    continue
                 state.references.append(
                     {
                         "id": len(state.references) + 1,
                         "marker": citation.get("marker"),
                         "source": citation.get("source"),
                         "url": citation.get("url", ""),
+                    }
+                )
+            if rejected_citation_urls:
+                state.logs.append(
+                    {
+                        "agent": self.name,
+                        "event": "unsupported_citations_removed",
+                        "section_id": section_id,
+                        "urls": list(dict.fromkeys(rejected_citation_urls)),
                     }
                 )
             normalized_outline.append(section)
@@ -330,15 +372,31 @@ class WriterAgent(BaseAgent):
             for section in normalized_outline
             if draft_sections.get(section["id"])
         ) or "（暂无章节内容）"
+        state.references = [
+            reference
+            for reference in state.references
+            if isinstance(reference, dict)
+            and self._is_allowed_citation_url(reference.get("url"), state)
+        ]
         source_lines = [
             f"- {ref.get('source') or ref.get('title')} ({ref.get('url', 'N/A')})"
             for ref in state.references
+            if self._is_allowed_citation_url(ref.get("url"), state)
         ]
         for fact in state.facts:
             source_line = (
                 f"- {fact.get('source_name') or fact.get('source_title')} "
                 f"({fact.get('source_url', 'N/A')})"
             )
+            if source_line not in source_lines:
+                source_lines.append(source_line)
+        for source in state.raw_sources:
+            url = str(source.get("url", "")).strip()
+            if not url or not self._is_allowed_source_url(url, state):
+                continue
+            source_name = str(source.get("title") or source.get("source") or url).strip()
+            scope = "（站点首页/栏目页，不能单独证明具体事实）" if self._is_landing_page(url) else ""
+            source_line = f"- {source_name} ({url}) {scope}".strip()
             if source_line not in source_lines:
                 source_lines.append(source_line)
         report_payload = {
@@ -379,15 +437,29 @@ class WriterAgent(BaseAgent):
                 if draft_sections.get(section["id"])
             )
 
+        report, invalid_urls = self._remove_unverified_links(
+            report, self._allowed_citation_urls(state)
+        )
+        if invalid_urls:
+            state.logs.append(
+                {
+                    "agent": self.name,
+                    "event": "unsupported_citations_removed",
+                    "section_id": "report",
+                    "urls": invalid_urls,
+                }
+            )
+
         state.outline = normalized_outline
         state.draft_sections = draft_sections
         state.final_report = report
         if has_synthesis_report:
-            # Match LeadWriter: synthesis references are appended only after a
-            # complete report was produced, unless the exact same value is
-            # already present. The objects are not normalized or URL-filtered.
             for reference in report_result.get("references", []):
-                if reference not in state.references:
+                if (
+                    isinstance(reference, dict)
+                    and self._is_allowed_citation_url(reference.get("url"), state)
+                    and reference not in state.references
+                ):
                     state.references.append(reference)
         state.phase = "reviewing"
         self._emit_progress(
@@ -441,27 +513,40 @@ class WriterAgent(BaseAgent):
             for issue in state.critic_feedback
             if isinstance(issue, dict) and not issue.get("resolved")
         ]
+        supplementary_facts = [
+            fact
+            for fact in state.facts
+            if isinstance(fact.get("metadata"), dict)
+            and fact["metadata"].get("analysis_mode") == "supplementary"
+            and fact["metadata"].get("research_iteration") == state.iteration
+        ]
+        new_facts = (supplementary_facts or state.facts[-5:])[-self.MAX_REVISION_FACTS :]
+        new_info = "\n".join(
+            self._format_revision_fact(fact) for fact in new_facts
+        ) or "无补充信息"
+        original_content = state.final_report[: self.MAX_REVISION_REPORT_CHARS]
         payload = {
             "mode": "revision",
             "query": state.query,
-            "original_content": state.final_report[:6000],
+            "original_content": original_content,
             "feedback": unresolved,
-            "new_facts": state.facts[-5:],
+            "new_facts": new_facts,
             "iteration": state.iteration,
         }
         revised_response = await self._complete_text(
             payload,
             system_prompt=self.REVISION_SYSTEM,
             user_prompt=self.REVISION_PROMPT.format(
-                original_content=state.final_report[:6000],
+                original_content=original_content,
                 feedback="\n".join(
-                    f"- [{issue.get('severity')}] {issue.get('description')}\n"
+                    f"- ID: {issue.get('id', 'unknown')} | [{issue.get('severity')}] "
+                    f"{issue.get('issue_type', '未分类')} | 位置: {issue.get('location') or issue.get('target_section') or '未指定'}\n"
+                    f"  问题: {issue.get('description')}\n"
+                    f"  依据: {issue.get('evidence') or '审核未提供具体依据'}\n"
                     f"  建议: {issue.get('suggestion')}"
                     for issue in unresolved
                 ) or "无具体反馈",
-                new_info="\n".join(
-                    f"- {str(fact.get('content', ''))[:200]}" for fact in state.facts[-5:]
-                ) or "无补充信息",
+                new_info=new_info,
             ),
             json_mode=True,
             temperature=0.3,
@@ -477,7 +562,21 @@ class WriterAgent(BaseAgent):
                 addressed_ids = {str(item).strip() for item in addressed}
                 for issue in state.critic_feedback:
                     if issue.get("id") in addressed_ids:
-                        issue["resolved"] = True
+                        # Writer's claim is recorded for the next independent
+                        # Critic pass; only Critic may close an issue.
+                        issue["writer_claimed_addressed"] = True
+                        issue["writer_claimed_iteration"] = state.iteration
+            unable_to_address = revision_result.get("unable_to_address", [])
+            if isinstance(unable_to_address, list):
+                for item in unable_to_address:
+                    if not isinstance(item, dict):
+                        continue
+                    issue_id = str(item.get("issue_id", "")).strip()
+                    reason = str(item.get("reason", "")).strip()
+                    for issue in state.critic_feedback:
+                        if issue.get("id") == issue_id:
+                            issue["writer_unable_reason"] = reason
+                            issue["writer_claimed_iteration"] = state.iteration
         state.phase = "reviewing"
         self._emit_progress(
             state,
@@ -490,6 +589,144 @@ class WriterAgent(BaseAgent):
             progress_callback,
         )
         return state
+
+    @staticmethod
+    def _format_revision_fact(fact: dict[str, Any]) -> str:
+        """Include source attribution so a revision can cite new evidence."""
+
+        content = str(fact.get("content", "")).strip()[:600]
+        source_name = str(fact.get("source_name") or fact.get("source_title") or "").strip()
+        source_url = str(fact.get("source_url", "")).strip()
+        metadata = fact.get("metadata") if isinstance(fact.get("metadata"), dict) else {}
+        search_query = str(metadata.get("search_query", "")).strip()
+        attribution = f"来源：[{source_name or '来源'}]({source_url})" if source_url else "来源链接缺失"
+        query_context = f"；补充查询：{search_query}" if search_query else ""
+        return f"- {content}\n  {attribution}{query_context}"
+
+    @staticmethod
+    def _format_section_sources(facts: list[dict[str, Any]]) -> str:
+        """Give the model exact retrieved URLs and flag generic landing pages."""
+
+        lines: list[str] = []
+        seen: set[str] = set()
+        for fact in facts:
+            url = str(fact.get("source_url", "")).strip()
+            if not url or url in seen:
+                continue
+            seen.add(url)
+            title = str(
+                fact.get("source_name") or fact.get("source_title") or "未知来源"
+            ).strip()
+            scope = (
+                "站点首页/栏目页，不能单独作为具体事实证据"
+                if WriterAgent._is_landing_page(url)
+                else "搜索结果详情链接"
+            )
+            lines.append(f"- {title} | {url} | {scope}")
+        return "\n".join(lines) or "（没有带有效 URL 的章节来源；不要生成引用链接）"
+
+    @staticmethod
+    def _allowed_source_urls(state: ResearchState) -> set[str]:
+        urls = {
+            str(source.get("url", "")).strip()
+            for source in state.raw_sources
+            if isinstance(source, dict) and str(source.get("url", "")).strip()
+        }
+        urls.update(
+            str(fact.get("source_url", "")).strip()
+            for fact in state.facts
+            if isinstance(fact, dict) and str(fact.get("source_url", "")).strip()
+        )
+        return urls
+
+    @staticmethod
+    def _allowed_citation_urls(state: ResearchState) -> set[str]:
+        """A retrieved homepage is not citable evidence for a concrete claim."""
+
+        return {
+            url
+            for url in WriterAgent._allowed_source_urls(state)
+            if not WriterAgent._is_landing_page(url)
+        }
+
+    @staticmethod
+    def _canonical_url(value: str) -> str:
+        parsed = urlparse(value.strip())
+        if parsed.scheme.lower() not in {"http", "https"} or not parsed.netloc:
+            return ""
+        return parsed._replace(
+            scheme=parsed.scheme.lower(), netloc=parsed.netloc.lower()
+        ).geturl().rstrip("/")
+
+    @staticmethod
+    def _is_allowed_source_url(value: Any, state: ResearchState) -> bool:
+        url = str(value or "").strip()
+        if not url:
+            return False
+        canonical = WriterAgent._canonical_url(url)
+        return bool(canonical) and canonical in {
+            WriterAgent._canonical_url(candidate)
+            for candidate in WriterAgent._allowed_source_urls(state)
+        }
+
+    @staticmethod
+    def _is_allowed_citation_url(value: Any, state: ResearchState) -> bool:
+        url = str(value or "").strip()
+        if not url or WriterAgent._is_landing_page(url):
+            return False
+        canonical = WriterAgent._canonical_url(url)
+        return bool(canonical) and canonical in {
+            WriterAgent._canonical_url(candidate)
+            for candidate in WriterAgent._allowed_citation_urls(state)
+        }
+
+    @staticmethod
+    def _remove_unverified_links(
+        content: str, allowed_urls: set[str]
+    ) -> tuple[str, list[str]]:
+        allowed = {WriterAgent._canonical_url(url) for url in allowed_urls}
+        invalid: list[str] = []
+
+        def replace(match: re.Match[str]) -> str:
+            label, url = match.group(1), match.group(2).strip()
+            if WriterAgent._canonical_url(url) in allowed:
+                return match.group(0)
+            invalid.append(url)
+            if WriterAgent._is_landing_page(url):
+                return f"{label}（站点首页/栏目页不能核验具体事实）"
+            return f"{label}（来源链接未核验）"
+
+        cleaned = re.sub(r"\[([^\]]+)\]\((https?://[^)]+)\)", replace, content)
+        return cleaned, list(dict.fromkeys(invalid))
+
+    @staticmethod
+    def _is_landing_page(value: str) -> bool:
+        parsed = urlparse(str(value or "").strip())
+        path = parsed.path.strip("/").lower()
+        return path in {
+            "",
+            "index",
+            "index.html",
+            "index.htm",
+            "home",
+            "homepage",
+            "about",
+            "news",
+            "articles",
+        }
+
+    @staticmethod
+    def _source_url_for_attribution(source: Any, facts: list[dict[str, Any]]) -> str:
+        label = str(source or "").strip()
+        for fact in facts:
+            candidates = {
+                str(fact.get("source_name", "")).strip(),
+                str(fact.get("source_title", "")).strip(),
+                str(fact.get("source_url", "")).strip(),
+            }
+            if label and label in candidates:
+                return str(fact.get("source_url", "")).strip() or "无可用URL"
+        return "无可用URL"
 
     def _emit_progress(
         self,

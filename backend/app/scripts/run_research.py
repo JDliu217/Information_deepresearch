@@ -75,7 +75,12 @@ def print_state(state: ResearchState) -> None:
 
 async def run(query: str, *, force_real: bool = False) -> ResearchState:
     runtime = create_configured_runtime(force_real=force_real)
-    return await runtime.run(query)
+    try:
+        return await runtime.run(query)
+    finally:
+        repository = runtime.repository
+        if repository is not None and getattr(repository, "owns_engine", False):
+            repository.close()
 
 
 def main() -> None:

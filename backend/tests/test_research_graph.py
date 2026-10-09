@@ -20,12 +20,13 @@ class SixSectionLLM(MockLLMClient):
     async def complete_json(self, role, payload):
         if role == "planner":
             return {
+                "research_subject": "六章节",
                 "outline": [
                     {
                         "id": f"sec_{index}",
                         "title": f"章节 {index}",
-                        "description": f"描述 {index}",
-                        "search_queries": [f"查询 {index}"],
+                        "description": f"围绕六章节主题描述第 {index} 个部分",
+                        "search_queries": [f"六章节 第 {index} 部分"],
                     }
                     for index in range(1, 7)
                 ],

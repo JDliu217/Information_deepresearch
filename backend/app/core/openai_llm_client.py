@@ -23,12 +23,14 @@ class LLMInvocationError(RuntimeError):
         category: str,
         attempts: int,
         detail: str,
+        response_preview: str = "",
     ) -> None:
         self.role = role
         self.model = model
         self.category = category
         self.attempts = attempts
         self.detail = detail
+        self.response_preview = response_preview
         super().__init__(
             "真实 LLM 调用失败: "
             f"role={role}, model={model}, category={category}, "
@@ -69,6 +71,31 @@ class OpenAICompatibleLLMClient(LLMClient):
         if not isinstance(parsed, dict):
             raise ValueError(f"真实 LLM 的 {role} 返回结果必须是 JSON 对象")
         return parsed
+
+    async def complete_json_with_raw(
+        self,
+        role: str,
+        payload: dict[str, Any],
+        system_prompt: str = "",
+        user_prompt: str = "",
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+    ) -> tuple[dict[str, Any], str]:
+        """Return the parsed object and exact response text for agent diagnostics."""
+
+        content = await self._complete(
+            role,
+            payload,
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            json_mode=True,
+            temperature=temperature,
+            max_tokens=max_tokens,
+        )
+        parsed = self._parse_json(content)
+        if not isinstance(parsed, dict):
+            raise ValueError(f"真实 LLM 的 {role} 返回结果必须是 JSON 对象")
+        return parsed, content
 
     async def complete_text(
         self,
@@ -133,12 +160,14 @@ class OpenAICompatibleLLMClient(LLMClient):
             request["response_format"] = {"type": "json_object"}
 
         last_error: Exception | None = None
+        last_response_preview = ""
         attempts = 0
         for attempt in range(self.settings.max_retries + 1):
             attempts = attempt + 1
             try:
                 response = await self._get_client().chat.completions.create(**request)
                 content = self._response_content(response)
+                last_response_preview = content[:12000]
                 if not content:
                     raise ValueError(f"真实 LLM 的 {role} 返回空内容")
                 if json_mode:
@@ -156,6 +185,7 @@ class OpenAICompatibleLLMClient(LLMClient):
             category=self._classify_error(last_error),
             attempts=attempts,
             detail=self._safe_error_detail(last_error),
+            response_preview=self._redact_secrets(last_response_preview),
         ) from last_error
 
     @staticmethod
@@ -226,10 +256,33 @@ class OpenAICompatibleLLMClient(LLMClient):
         status_code = getattr(error, "status_code", None)
         if isinstance(status_code, int):
             detail = f"http_status={status_code}; {detail}"
-        if self.settings.api_key:
-            detail = detail.replace(self.settings.api_key, "[redacted-api-key]")
+        detail = self._redact_secrets(detail)
         detail = " ".join(detail.split())
         return detail[:500]
+
+    def _redact_secrets(self, value: str) -> str:
+        """Remove configured and common token-shaped credentials from traces."""
+
+        if self.settings.api_key:
+            value = value.replace(self.settings.api_key, "[redacted-api-key]")
+        value = re.sub(
+            r"(?i)(bearer\s+)[A-Za-z0-9._~+/=-]+",
+            r"\1[redacted-token]",
+            value,
+        )
+        value = re.sub(
+            r"(?i)(api[_-]?key[\"']?\s*[=:]\s*[\"']?)[^\s,\"'}]+",
+            r"\1[redacted-api-key]",
+            value,
+        )
+        value = re.sub(
+            r"(?i)((?:access[_-]?token|refresh[_-]?token|password|secret|authorization)"
+            r"[\"']?\s*[=:]\s*[\"']?)[^\s,\"'}]+",
+            r"\1[redacted-secret]",
+            value,
+        )
+        value = re.sub(r"\bsk-[A-Za-z0-9_-]{8,}\b", "[redacted-token]", value)
+        return value
 
     @staticmethod
     def _response_content(response: Any) -> str:

@@ -41,7 +41,12 @@ class SequencedReviewLLM(MockLLMClient):
 
     async def complete_json(self, role, payload):
         if role == "critic":
-            return next(self.reviews)
+            result = next(self.reviews)
+            if result.get("resolved_issue_ids") == ["__all_previous__"]:
+                result["resolved_issue_ids"] = [
+                    issue["id"] for issue in payload.get("previous_issues", [])
+                ]
+            return result
         return await super().complete_json(role, payload)
 
 
@@ -352,7 +357,10 @@ class GraphRuntimeStreamTests(unittest.TestCase):
                     ],
                     search_queries=["2025年新能源汽车行业数据"],
                 ),
-                review("pass", score=8.0),
+                {
+                    **review("pass", score=8.0),
+                    "resolved_issue_ids": ["__all_previous__"],
+                },
             ]
         )
         workflow = create_research_runtime(llm, MockSearchClient(), max_iterations=1)

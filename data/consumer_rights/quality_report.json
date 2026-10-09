@@ -1,0 +1,107 @@
+{
+  "generated_at": "2026-10-09",
+  "documents": [
+    {
+      "document_id": "consumer_protection_law",
+      "paragraphs": 158,
+      "articles": 63,
+      "empty_articles": 0,
+      "duplicate_article_labels": [],
+      "missing_article_numbers": [],
+      "ordered": true,
+      "valid": true
+    },
+    {
+      "document_id": "consumer_protection_implementing_regulation",
+      "paragraphs": 90,
+      "articles": 53,
+      "empty_articles": 0,
+      "duplicate_article_labels": [],
+      "missing_article_numbers": [],
+      "ordered": true,
+      "valid": true
+    },
+    {
+      "document_id": "civil_code",
+      "paragraphs": 2403,
+      "articles": 1260,
+      "empty_articles": 0,
+      "duplicate_article_labels": [],
+      "missing_article_numbers": [],
+      "ordered": true,
+      "valid": true
+    },
+    {
+      "document_id": "product_quality_law",
+      "paragraphs": 141,
+      "articles": 74,
+      "empty_articles": 0,
+      "duplicate_article_labels": [],
+      "missing_article_numbers": [],
+      "ordered": true,
+      "valid": true
+    },
+    {
+      "document_id": "advertising_law",
+      "paragraphs": 230,
+      "articles": 74,
+      "empty_articles": 0,
+      "duplicate_article_labels": [],
+      "missing_article_numbers": [],
+      "ordered": true,
+      "valid": true
+    },
+    {
+      "document_id": "food_safety_law",
+      "paragraphs": 466,
+      "articles": 154,
+      "empty_articles": 0,
+      "duplicate_article_labels": [],
+      "missing_article_numbers": [],
+      "ordered": true,
+      "valid": true
+    },
+    {
+      "document_id": "ecommerce_law",
+      "paragraphs": 160,
+      "articles": 89,
+      "empty_articles": 0,
+      "duplicate_article_labels": [],
+      "missing_article_numbers": [],
+      "ordered": true,
+      "valid": true
+    },
+    {
+      "document_id": "prepaid_consumption_interpretation",
+      "paragraphs": 72,
+      "articles": 27,
+      "empty_articles": 0,
+      "duplicate_article_labels": [],
+      "missing_article_numbers": [],
+      "ordered": true,
+      "valid": true
+    },
+    {
+      "document_id": "food_drug_punitive_compensation_interpretation",
+      "paragraphs": 48,
+      "articles": 19,
+      "empty_articles": 0,
+      "duplicate_article_labels": [],
+      "missing_article_numbers": [],
+      "ordered": true,
+      "valid": true
+    },
+    {
+      "document_id": "online_seven_day_return_measure",
+      "paragraphs": 73,
+      "articles": 38,
+      "empty_articles": 0,
+      "duplicate_article_labels": [],
+      "missing_article_numbers": [],
+      "ordered": true,
+      "valid": true
+    }
+  ],
+  "document_count": 10,
+  "article_count": 1851
+}

@@ -54,11 +54,60 @@ class CriticAgentTests(unittest.TestCase):
             return client
 
         client = asyncio.run(run())
-        self.assertLessEqual(len(client.payload["report"]), 8000)
+        self.assertLessEqual(
+            len(client.payload["report"]), CriticAgent.MAX_REVIEW_REPORT_CHARS
+        )
         self.assertEqual(len(client.payload["facts"]), 20)
         self.assertTrue(all(len(fact["content"]) <= 150 for fact in client.payload["facts"]))
         self.assertEqual(len(client.payload["data_points"]), 15)
         self.assertEqual(set(client.payload["outline"][0]), {"id", "title", "status"})
+
+    def test_critic_reviews_final_report_and_prioritizes_new_evidence(self):
+        state = ResearchState("测试问题")
+        state.iteration = 1
+        state.final_report = "最终交付报告" * 2000
+        state.draft_sections = {"sec-1": "修订前的旧草稿"}
+        state.facts = [
+            {"id": f"old-{index}", "content": f"旧事实 {index}"}
+            for index in range(25)
+        ]
+        state.facts.append(
+            {
+                "id": "new-2024-fact",
+                "content": "2024年营业收入为51.51亿元。",
+                "source_name": "公司业绩快报",
+                "source_url": "https://example.com/annual-report",
+                "confidence": 0.9,
+                "metadata": {
+                    "analysis_mode": "supplementary",
+                    "research_iteration": 1,
+                },
+            }
+        )
+        state.raw_sources = [
+            {
+                "title": "旧来源",
+                "url": f"https://example.com/old/{index}",
+                "analysis_mode": "normal",
+            }
+            for index in range(35)
+        ] + [
+            {
+                "title": "2024年业绩快报",
+                "url": "https://example.com/annual-report",
+                "source": "公司公告",
+                "analysis_mode": "supplementary",
+            }
+        ]
+
+        context = CriticAgent._build_review_context(state)
+
+        self.assertEqual(context["draft_content"], state.final_report)
+        self.assertNotIn("修订前的旧草稿", context["draft_content"])
+        self.assertEqual(context["facts"][0]["id"], "new-2024-fact")
+        self.assertIn("https://example.com/annual-report", context["facts_text"])
+        self.assertIn("https://example.com/annual-report", context["sources_text"])
+        self.assertEqual(context["sources"][0]["url"], "https://example.com/annual-report")
 
     def test_critic_prompt_matches_reference_review_contract(self):
         class CapturingCriticClient(MockLLMClient):
@@ -141,6 +190,63 @@ class CriticAgentTests(unittest.TestCase):
         self.assertEqual(state.review_result["verdict"], "pass")
         self.assertEqual(state.quality_score, 8.0)
         self.assertEqual(state.review_result["issues"], [])
+
+    def test_critic_tracks_raw_scores_and_only_closes_explicitly_resolved_issues(self):
+        class ReviewProgressClient(MockLLMClient):
+            def __init__(self):
+                self.prompts = []
+
+            async def complete_json(self, role, payload, system_prompt="", user_prompt="", **kwargs):
+                self.prompts.append(user_prompt)
+                if payload.get("previous_issues"):
+                    issue_id = payload["previous_issues"][0]["id"]
+                    return {
+                        "overall_assessment": {
+                            "verdict": "needs_revision",
+                            "quality_score": 6,
+                            "summary": "补充证据后仍需审慎核查",
+                        },
+                        "issues": [],
+                        "resolved_issue_ids": [issue_id],
+                        "unresolved_issue_ids": [],
+                    }
+                return {
+                    "overall_assessment": {
+                        "verdict": "needs_revision",
+                        "quality_score": 4,
+                        "summary": "核心经营数据缺少原始来源",
+                    },
+                    "issues": [{
+                        "target_section": "sec-1",
+                        "issue_type": "missing_source",
+                        "severity": "major",
+                        "location": "营业收入数据",
+                        "description": "2024年营业收入缺少可核验的原始来源",
+                        "evidence": "报告只有聚合网页链接",
+                        "suggestion": "引用公司年报或公告原文",
+                    }],
+                }
+
+        async def run():
+            client = ReviewProgressClient()
+            state = ResearchState("分析公司经营表现")
+            state.final_report = "初稿报告"
+            state.outline = [{"id": "sec-1", "title": "经营表现"}]
+            await CriticAgent(client).run(state)
+            issue_id = state.critic_feedback[0]["id"]
+            state.iteration = 1
+            state.final_report = "补充公司年报来源后的修订报告"
+            await CriticAgent(client).run(state)
+            return state, issue_id, client
+
+        state, issue_id, client = asyncio.run(run())
+
+        self.assertEqual(state.review_history[0]["quality_score"], 4.0)
+        self.assertEqual(state.review_history[1]["quality_score"], 6.0)
+        self.assertEqual(state.review_history[1]["resolved_issue_ids"], [issue_id])
+        self.assertEqual(state.review_history[1]["unresolved_issue_ids"], [])
+        self.assertTrue(state.critic_feedback[0]["resolved"])
+        self.assertIn(issue_id, client.prompts[1])
 
     def test_critic_rejects_invalid_result(self):
         state = ResearchState("测试问题")

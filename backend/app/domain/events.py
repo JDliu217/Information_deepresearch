@@ -22,6 +22,8 @@ class ResearchEventType:
     DRAFT_READY = "draft_ready"
     REVIEW_COMPLETED = "review_completed"
     RESEARCH_COMPLETED = "research_completed"
+    RESEARCH_FAILED = "research_failed"
+    RESEARCH_CANCELLED = "research_cancelled"
     AGENT_PROGRESS = "agent_progress"
 
 
@@ -35,6 +37,8 @@ EVENT_TYPES = frozenset(
         ResearchEventType.DRAFT_READY,
         ResearchEventType.REVIEW_COMPLETED,
         ResearchEventType.RESEARCH_COMPLETED,
+        ResearchEventType.RESEARCH_FAILED,
+        ResearchEventType.RESEARCH_CANCELLED,
         ResearchEventType.AGENT_PROGRESS,
     }
 )
@@ -104,6 +108,8 @@ EVENT_REQUIRED_FIELDS = {
             "code_executions",
         }
     ),
+    ResearchEventType.RESEARCH_FAILED: frozenset({"error"}),
+    ResearchEventType.RESEARCH_CANCELLED: frozenset({"reason"}),
     ResearchEventType.AGENT_PROGRESS: frozenset(
         {"agent", "message_type", "timestamp", "content"}
     ),

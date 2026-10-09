@@ -32,6 +32,7 @@ class ResearchRequest(BaseModel):
 
 class HealthResponse(BaseModel):
     status: str
+    database: str
 
 
 class RunStatusResponse(BaseModel):
@@ -46,3 +47,19 @@ class RunStatusResponse(BaseModel):
 class ResearchEventsResponse(BaseModel):
     session_id: str
     events: list[dict]
+
+
+class ResearchResultResponse(BaseModel):
+    session_id: str
+    query: str
+    status: str
+    phase: str
+    iteration: int
+    error: str | None = None
+    final_report: str
+    quality_status: str = "not_reviewed"
+    quality_gate_passed: bool = False
+    quality_score: float = 0.0
+    unresolved_issues: int = 0
+    planner_diagnostics: list[dict] = Field(default_factory=list)
+    updated_at: str

@@ -70,9 +70,9 @@ V2 运行入口，并把图节点更新转换为对外研究事件，因此调�
 Agent 运行前发出。
 
 I8 的 Repository 接在 runtime 和数据库之间：runtime 保存研究状态快照并追加事件，
-`ResearchRepository` 负责 SQLAlchemy 数据访问，Agent 不直接操作数据库。PostgreSQL
-表结构由 Alembic 迁移创建；本地测试使用 SQLite 验证相同的数据访问契约。检查点和
-恢复将在后续迭代接入。
+`ResearchRepository` 负责 SQLAlchemy 数据访问，Agent 不直接操作数据库。配置
+`DATABASE_URL` 后，API 和命令行运行会自动创建 Repository；没有该配置时继续使用内存模式。
+PostgreSQL 表结构由 Alembic 迁移创建；本地测试使用 SQLite 验证相同的数据访问契约。
 
 I9 增加了 `RunControlStore`。`InMemoryRunControlStore` 用于本地测试，
 `RedisRunControlStore` 用于真实运行环境。runtime 会在开始、节点更新、完成和异常时更新
@@ -83,10 +83,13 @@ I9 增加了 `RunControlStore`。`InMemoryRunControlStore` 用于本地测试，
 I10 增加 FastAPI 接口：`POST /api/research/stream` 以 SSE 推送 `ResearchEvent`，
 `GET /api/research/{session_id}/status` 查询运行状态，`POST /api/research/{session_id}/cancel`
 请求取消，`GET /api/research/{session_id}/events` 读取已持久化事件，
+`GET /api/research/{session_id}/result` 读取最终报告，
 `POST /api/research/{session_id}/resume` 从 LangGraph checkpoint 恢复并继续推送 SSE。
-默认 API 使用内存运行控制和内存 checkpoint，方便本地测试；部署时可以注入 Redis、
-PostgreSQL Repository 和其他 checkpoint 实现。FastAPI 只负责 HTTP/SSE 传输，不复制 Agent
-或 LangGraph 编排逻辑。
+配置 PostgreSQL 后，状态、失败原因、完整领域状态、最终报告和按序事件会落库；状态接口在
+内存运行控制中找不到任务时会回退到 PostgreSQL。LangGraph checkpoint 仍使用内存实现，
+因此进程重启后的状态/事件/报告可查，但暂停任务的 checkpoint 恢复尚未持久化。
+Planner 规划失败时，`/result` 会返回每次尝试的模型、响应格式、章节数、校验原因和脱敏响应摘要；
+`/events` 中的 `research_failed` 事件也会带上这些诊断，便于区分模型调用失败和大纲校验失败。
 
 I11 增加真实服务适配层。`OpenAICompatibleLLMClient` 支持 DashScope、DeepSeek、OpenAI
 等兼容接口；不同 Agent 可以通过环境变量使用不同模型，提示词集中在
@@ -97,7 +100,8 @@ I11 增加真实服务适配层。`OpenAICompatibleLLMClient` 支持 DashScope�
 设置 `LLM_API_KEY` 或 `BOCHA_API_KEY` 后分别启用对应真实服务。
 
 事件类型包括 `research_started`、`phase_started`、`outline_ready`、
-`research_evidence_ready`、`analysis_ready`、`draft_ready`、`review_completed` 和 `research_completed`。
+`research_evidence_ready`、`analysis_ready`、`draft_ready`、`review_completed`、
+`research_completed`，以及发生异常或取消时记录的 `research_failed`、`research_cancelled`。
 `draft_ready` 事件还包含 `outline` 和 `draft_sections`，可以按章节读取中间结果。
 `analysis_ready` 事件包含洞察、数据点和 ECharts 配置；最终的 `research_completed`
 事件还包含 CodeWizard 的执行记录；最终的 `research_completed` 事件包含报告、审核结果、质量评分、引用和分析结果。
@@ -163,17 +167,31 @@ $env:PYTHONPATH = "backend"
 
 ## 数据库迁移
 
-默认数据库地址来自 `DATABASE_URL` 环境变量：
+启动 PostgreSQL 并创建数据库后，在项目根目录 `.env` 中填写连接地址：
 
 ```text
-postgresql+psycopg://postgres:postgres@localhost:5432/information_deepresearch
+DATABASE_URL=postgresql+psycopg://postgres:你的密码@localhost:5432/information_deepresearch
 ```
 
-初始化或升级表结构：
+初始化或升级表结构（每次拉取包含新迁移的代码后先运行）：
 
 ```powershell
 $env:PYTHONPATH = "backend"
 .venv\Scripts\python.exe -m alembic -c alembic.ini upgrade head
 ```
 
-I8 的持久化对象是 `research_runs`（最新状态快照）和 `research_events`（按序事件记录）。
+然后重启 API。`GET /health` 应返回 `{"status":"ok","database":"connected"}`；若数据库
+不可达或迁移未完成，API 会在启动时明确报错。主要持久化对象是 `research_runs`（问题、最新
+领域状态、运行状态、错误和最终报告）和 `research_events`（含 sequence、创建时间和事件数据）。
+
+完成或失败后可以查询：
+
+```text
+GET /api/research/{session_id}/status
+GET /api/research/{session_id}/events
+GET /api/research/{session_id}/result
+```
+
+## 消费者权益法规语料（实验）
+
+首批官方来源的消费者权益法律文本保存在 `data/consumer_rights/`：原始文件位于 `raw/`，逐条检索记录位于 `processed/articles.jsonl`，版本和来源清单见 `manifest.csv`。当前共 10 份资料、1,851 条法条记录，按法律条文切分，尚未生成 Embedding，也尚未导入 Milvus。资料范围、来源状态和导入字段说明见该目录下的 `README.md`。

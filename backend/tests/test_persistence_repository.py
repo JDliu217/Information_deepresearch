@@ -66,6 +66,17 @@ class PersistenceRepositoryTests(unittest.TestCase):
             "research_started",
             "phase_started",
         ])
+        self.assertEqual([event["sequence"] for event in events], [0, 1])
+        self.assertTrue(events[0]["created_at"])
+
+    def test_run_status_and_error_are_persisted(self):
+        state = ResearchState("测试问题", session_id="failed-session")
+
+        self.repository.save_state(state, status="failed", error="节点异常")
+
+        status = self.repository.load_run_status("failed-session")
+        self.assertEqual(status["status"], "failed")
+        self.assertEqual(status["error"], "节点异常")
 
     def test_append_event_requires_existing_run(self):
         with self.assertRaisesRegex(ValueError, "研究任务不存在"):

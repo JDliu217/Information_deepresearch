@@ -124,6 +124,45 @@ class RealLLMClientTests(unittest.TestCase):
         self.assertIn("假设", request["messages"][0]["content"])
         self.assertIn("search_queries", request["messages"][1]["content"])
 
+    def test_complete_json_with_raw_preserves_response_for_agent_diagnostics(self):
+        raw_response = '{"research_subject":"王维","outline":[]} '
+        fake = FakeClient([raw_response])
+        client = OpenAICompatibleLLMClient(self.settings(), client=fake)
+
+        result, raw = asyncio.run(
+            client.complete_json_with_raw(
+                "planner",
+                {"query": "王维的一生"},
+                system_prompt="只输出 JSON。",
+                user_prompt="请返回 JSON 对象。",
+            )
+        )
+
+        self.assertEqual(result["research_subject"], "王维")
+        self.assertEqual(raw, raw_response.strip())
+
+    def test_invalid_json_error_keeps_bounded_redacted_response_preview(self):
+        raw_response = '{"api_key":"test-key","token":"sk-abcdefghijklmno"'
+        fake = FakeClient([raw_response])
+        client = OpenAICompatibleLLMClient(
+            self.settings(max_retries=0),
+            client=fake,
+        )
+
+        with self.assertRaises(LLMInvocationError) as context:
+            asyncio.run(
+                client.complete_json(
+                    "planner",
+                    {"query": "王维的一生"},
+                    system_prompt="只输出 JSON。",
+                    user_prompt="请返回 JSON 对象。",
+                )
+            )
+
+        self.assertIn("[redacted-api-key]", context.exception.response_preview)
+        self.assertIn("[redacted-token]", context.exception.response_preview)
+        self.assertLessEqual(len(context.exception.response_preview), 12000)
+
     def test_complete_json_accepts_per_call_generation_settings(self):
         fake = FakeClient(['{"outline": []}'])
         client = OpenAICompatibleLLMClient(self.settings(), client=fake)
